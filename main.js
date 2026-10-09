@@ -90,6 +90,10 @@ function getSaveDirectorySettingsPath() {
   return path.join(app.getPath('userData'), 'save-directory.json');
 }
 
+function getDefaultSaveDirectory() {
+  return path.join(app.getPath('videos'), 'WinScreenRecorder');
+}
+
 async function readSaveDirectoryPreference() {
   try {
     const settings = JSON.parse(await fsp.readFile(getSaveDirectorySettingsPath(), 'utf8'));
@@ -102,20 +106,24 @@ async function readSaveDirectoryPreference() {
 }
 
 async function getSaveDirectoryStatus() {
-  const directory = await readSaveDirectoryPreference();
-  if (!directory) return { directory: null, available: true };
+  const customDirectory = await readSaveDirectoryPreference();
+  const directory = customDirectory || getDefaultSaveDirectory();
   try {
-    return { directory, available: (await fsp.stat(directory)).isDirectory() };
+    if (!customDirectory) await fsp.mkdir(directory, { recursive: true });
+    return { directory, custom: Boolean(customDirectory), available: (await fsp.stat(directory)).isDirectory() };
   } catch {
-    return { directory, available: false };
+    return { directory, custom: Boolean(customDirectory), available: false };
   }
 }
 
 async function chooseSaveDirectory() {
   const current = await readSaveDirectoryPreference();
+  const currentStatus = await getSaveDirectoryStatus();
+  const defaultDirectory = getDefaultSaveDirectory();
+  await fsp.mkdir(defaultDirectory, { recursive: true });
   const result = await dialog.showOpenDialog(mainWindow, {
     title: 'Elegir carpeta de guardado',
-    defaultPath: current || app.getPath('videos'),
+    defaultPath: currentStatus.available ? current || currentStatus.directory : defaultDirectory,
     properties: ['openDirectory', 'createDirectory']
   });
   if (result.canceled || !result.filePaths[0]) return getSaveDirectoryStatus();
@@ -124,12 +132,12 @@ async function chooseSaveDirectory() {
   if (!stats.isDirectory()) throw new Error('La ubicación elegida no es una carpeta válida.');
   await fsp.mkdir(path.dirname(getSaveDirectorySettingsPath()), { recursive: true });
   await fsp.writeFile(getSaveDirectorySettingsPath(), JSON.stringify({ directory }), 'utf8');
-  return { directory, available: true };
+  return { directory, custom: true, available: true };
 }
 
 async function resetSaveDirectory() {
   await fsp.rm(getSaveDirectorySettingsPath(), { force: true });
-  return { directory: null, available: true };
+  return getSaveDirectoryStatus();
 }
 
 function notifySaveProgress(stage) {
@@ -696,6 +704,42 @@ async function saveRecording(id, format) {
   }
 }
 
+async function saveImage(input, format, sourceName) {
+  if (!['png', 'jpg'].includes(format)) throw new Error('El formato de imagen seleccionado no está permitido.');
+  const imageBytes = Buffer.isBuffer(input)
+    ? input
+    : ArrayBuffer.isView(input)
+      ? Buffer.from(input.buffer, input.byteOffset, input.byteLength)
+      : input instanceof ArrayBuffer
+        ? Buffer.from(input)
+        : null;
+  if (!imageBytes || imageBytes.length < 4 || imageBytes.length > 100 * 1024 * 1024) {
+    throw new Error('La imagen no tiene un tamaño válido.');
+  }
+  const validPng = format === 'png'
+    && imageBytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+  const validJpeg = format === 'jpg' && imageBytes[0] === 0xff && imageBytes[1] === 0xd8;
+  if (!validPng && !validJpeg) throw new Error('El contenido de la imagen no coincide con el formato seleccionado.');
+
+  const saveDirectory = await getSaveDirectoryStatus();
+  if (!saveDirectory.available) throw new Error('La carpeta de guardado predeterminada no está disponible. Elige otra en Preferencias / Configuración.');
+  const captureName = safeCaptureFileName(sourceName);
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const targetPath = chooseUniqueMediaPath(
+    path.join(saveDirectory.directory, `${captureName}-${timestamp}.${format}`),
+    (candidate) => fs.existsSync(candidate)
+  );
+  const temporaryPath = path.join(saveDirectory.directory, `.${path.parse(targetPath).name}-${randomUUID()}.partial.${format}`);
+  try {
+    await fsp.writeFile(temporaryPath, imageBytes, { flag: 'wx' });
+    await fsp.rename(temporaryPath, targetPath);
+    return { status: 'saved', path: targetPath };
+  } catch (error) {
+    await fsp.rm(temporaryPath, { force: true }).catch(() => {});
+    throw new Error(`No se pudo guardar la imagen: ${error.message}`);
+  }
+}
+
 async function commitOutputPair(outputs, currentSession, overwriteConfirmed) {
   const backups = [];
   const installed = [];
@@ -856,6 +900,7 @@ function registerIpcHandlers() {
     }
   });
   registerHandler('save-recording', saveRecording);
+  registerHandler('save-image', saveImage);
   registerHandler('discard-recording', async (id) => {
     if (!recordingSession || recordingSession.id !== id || recordingSession.status !== 'ready') {
       throw new Error('La grabación pendiente ya no está disponible.');

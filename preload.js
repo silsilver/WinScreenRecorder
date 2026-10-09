@@ -21,6 +21,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   appendRecordingChunk: (id, chunk) => ipcRenderer.invoke('append-recording-chunk', id, chunk),
   completeRecording: (id, hasAudio) => ipcRenderer.invoke('complete-recording', id, hasAudio),
   saveRecording: (id, format) => ipcRenderer.invoke('save-recording', id, format),
+  saveImage: (bytes, format, sourceName) => ipcRenderer.invoke('save-image', bytes, format, sourceName),
   onSaveProgress: (callback) => {
     if (typeof callback !== 'function') return () => {};
     const listener = (_event, progress) => callback(progress);

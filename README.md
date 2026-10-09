@@ -32,6 +32,9 @@ El instalador x64 se genera en `dist/`. El proceso prepara una compilación Wind
 
 ## Captura y formatos
 
+- El selector permite capturar video o imagen. Las imágenes se guardan como PNG o JPG; conservan la selección de pantalla/ventana, el tamaño de salida y la cuenta atrás. El audio y la transcripción se usan solo para video.
+- Para capturar solo una parte, elige una pantalla y activa “Capturar una porción”. Arrastra sobre la vista previa para seleccionar el área; el recuadro se marca también sobre la tarjeta de la pantalla.
+- De manera predeterminada, las capturas se guardan en `Videos\WinScreenRecorder`; la carpeta se crea al iniciar. Se puede cambiar desde Configuración. Si el nombre ya existe, se genera otro con sufijo.
 - WebM se guarda directamente desde la captura.
 - MP4 y MKV se convierten a H.264/AAC; GIF se genera como animación sin audio.
 - Micrófono y audio de salida de Windows se pueden combinar con el video. El audio del sistema depende del soporte de loopback disponible en Windows.

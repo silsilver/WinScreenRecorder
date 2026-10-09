@@ -3,6 +3,20 @@
     statusPill: document.getElementById('status-pill'),
     statusText: document.getElementById('status-text'),
     compactToggle: document.getElementById('compact-toggle'),
+    captureMode: document.getElementById('capture-mode-select'),
+    compactCaptureMode: document.getElementById('compact-capture-mode-select'),
+    captureModeBadge: document.getElementById('capture-mode-badge'),
+    captureRegionBadge: document.getElementById('capture-region-badge'),
+    regionCapture: document.getElementById('region-capture-toggle'),
+    compactRegionCapture: document.getElementById('compact-region-toggle'),
+    regionCaptureRow: document.getElementById('region-capture-row'),
+    regionDialog: document.getElementById('region-dialog'),
+    regionPreviewFrame: document.getElementById('region-preview-frame'),
+    regionPreviewVideo: document.getElementById('region-preview-video'),
+    regionSelectionBox: document.getElementById('region-selection-box'),
+    regionSizeLabel: document.getElementById('region-size-label'),
+    confirmRegionSelection: document.getElementById('confirm-region-selection'),
+    cancelRegionSelection: document.getElementById('cancel-region-selection'),
     saveDirectoryDisplay: document.getElementById('save-directory-display'),
     chooseSaveDirectory: document.getElementById('choose-save-directory'),
     resetSaveDirectory: document.getElementById('reset-save-directory'),
@@ -46,6 +60,7 @@
     idleActions: document.getElementById('idle-actions'),
     countdownActions: document.getElementById('countdown-actions'),
     countdownNumber: document.getElementById('countdown-number'),
+    countdownCopy: document.getElementById('countdown-copy'),
     recordingActions: document.getElementById('recording-actions'),
     saveActions: document.getElementById('save-actions'),
     saveTitle: document.getElementById('save-title'),
@@ -84,11 +99,92 @@
     captureConfigQueue: Promise.resolve(),
     systemAudioAvailable: false,
     captureStep: 'display',
-    developerInfo: null
+    developerInfo: null,
+    regionRect: null,
+    regionAnimationId: null,
+    cropCanvas: null,
+    cropVideo: null,
+    regionDragStart: null,
+    regionPendingRect: null,
+    resolveRegionSelection: null
   };
 
-  const busyPhases = new Set(['loading', 'preparing', 'recording', 'finalizing', 'saving']);
+  const busyPhases = new Set(['loading', 'preparing', 'countdown', 'capturing-image', 'recording', 'finalizing', 'saving']);
   const compactPreferenceKey = 'winscreen-recorder-compact';
+  const videoFormats = [
+    ['mp4', 'MP4 · H.264'], ['mkv', 'MKV · H.264'], ['webm', 'WebM · VP9 / VP8'], ['gif', 'GIF animado']
+  ];
+  const imageFormats = [['png', 'PNG · Sin pérdida'], ['jpg', 'JPG · Alta calidad']];
+
+  function populateFormatOptions(mode, preferredValue) {
+    const options = mode === 'image' ? imageFormats : videoFormats;
+    for (const select of [elements.format, elements.compactFormat]) {
+      select.replaceChildren(...options.map(([value, label]) => {
+        const option = document.createElement('option');
+        option.value = value;
+        option.textContent = label;
+        return option;
+      }));
+      select.value = options.some(([value]) => value === preferredValue) ? preferredValue : options[0][0];
+    }
+  }
+
+  function setCaptureMode(mode) {
+    const isImage = mode === 'image';
+    document.body.classList.toggle('image-mode', isImage);
+    elements.captureMode.value = isImage ? 'image' : 'video';
+    elements.compactCaptureMode.value = elements.captureMode.value;
+    elements.captureModeBadge.textContent = isImage ? 'IMAGEN' : 'VIDEO';
+    elements.captureModeBadge.className = `capture-mode-badge ${isImage ? 'is-image' : 'is-video'}`;
+    document.querySelector('.intro h2').textContent = isImage ? 'Prepara tu imagen' : 'Prepara tu grabación';
+    document.querySelector('.intro-copy').textContent = isImage
+      ? 'Elige una pantalla o porción y ajusta el tamaño de la imagen.'
+      : 'Elige una pantalla o ventana y ajusta el audio antes de empezar.';
+    elements.countdownCopy.firstChild.textContent = isImage ? 'La imagen se captura en ' : 'La grabación comienza en ';
+    const preferred = elements.format.value;
+    populateFormatOptions(isImage ? 'image' : 'video', preferred);
+    const audioDisabled = isImage || state.phase !== 'idle';
+    elements.microphone.disabled = audioDisabled;
+    elements.systemAudio.disabled = audioDisabled || !state.systemAudioAvailable;
+    elements.systemAudioRow.classList.toggle('is-disabled', isImage || !state.systemAudioAvailable);
+    elements.systemAudioHint.textContent = isImage
+      ? 'El audio solo se incluye en capturas de video.'
+      : state.systemAudioAvailable ? 'Disponible en Windows.' : 'El audio del sistema requiere Windows.';
+    elements.microphone.closest('.toggle-row').querySelector('.toggle-detail').textContent = isImage
+      ? 'Disponible al capturar video'
+      : 'Incluir mi voz';
+    elements.compactMicrophone.disabled = audioDisabled;
+    elements.compactSystemAudio.disabled = audioDisabled || !state.systemAudioAvailable;
+    elements.start.innerHTML = isImage
+      ? '<span aria-hidden="true">▧</span> Capturar imagen'
+      : '<span class="record-icon" aria-hidden="true"></span> Iniciar grabación';
+    elements.compactStart.innerHTML = isImage
+      ? '<span aria-hidden="true">▧</span> Capturar'
+      : '<span class="record-icon" aria-hidden="true"></span> Grabar';
+    elements.compactSize.closest('.compact-setting-field').firstChild.textContent = isImage ? 'Tamaño de imagen' : 'Tamaño';
+    elements.videoSize.previousElementSibling.textContent = isImage ? 'Tamaño de imagen' : 'Tamaño del video';
+    elements.regionCapture.checked = elements.compactRegionCapture.checked;
+    syncRegionControlAvailability();
+  }
+
+  function syncRegionControlAvailability() {
+    const selected = state.sources.find((source) => source.id === state.selectedSourceId);
+    const isScreen = Boolean(selected?.id.startsWith('screen:'));
+    if (!isScreen) {
+      elements.regionCapture.checked = false;
+      elements.compactRegionCapture.checked = false;
+      if (state.regionRect) {
+        state.regionRect = null;
+        elements.captureRegionBadge.hidden = true;
+        updateRegionHighlight();
+      }
+    }
+    const disabled = !isScreen || state.phase !== 'idle';
+    elements.regionCapture.disabled = disabled;
+    elements.compactRegionCapture.disabled = disabled;
+    elements.regionCaptureRow.classList.toggle('is-disabled', disabled);
+    elements.regionCaptureRow.title = isScreen ? '' : 'Selecciona una pantalla para capturar una porción.';
+  }
 
   async function setCompactMode(enabled, persist = true) {
     try {
@@ -131,7 +227,7 @@
         ? directory
         : `Carpeta no disponible: ${directory}`;
     elements.saveDirectoryDisplay.classList.toggle('is-unavailable', Boolean(directory && !status.available));
-    elements.resetSaveDirectory.hidden = !directory;
+    elements.resetSaveDirectory.hidden = !status?.custom;
   }
 
   async function loadSaveDirectory() {
@@ -193,16 +289,21 @@
     elements.saveActions.hidden = phase !== 'ready' && phase !== 'saving';
 
     const controlsDisabled = busyPhases.has(phase) || phase === 'ready';
+    elements.captureMode.disabled = controlsDisabled;
+    elements.compactCaptureMode.disabled = controlsDisabled;
     elements.format.disabled = controlsDisabled;
     elements.videoSize.disabled = controlsDisabled;
     elements.countdown.disabled = controlsDisabled;
-    elements.microphone.disabled = controlsDisabled;
-    elements.systemAudio.disabled = controlsDisabled || !state.systemAudioAvailable;
+    elements.microphone.disabled = controlsDisabled || elements.captureMode.value === 'image';
+    elements.systemAudio.disabled = controlsDisabled || elements.captureMode.value === 'image' || !state.systemAudioAvailable;
+    elements.compactMicrophone.disabled = controlsDisabled || elements.captureMode.value === 'image';
+    elements.compactSystemAudio.disabled = controlsDisabled || elements.captureMode.value === 'image' || !state.systemAudioAvailable;
     elements.chooseSaveDirectory.disabled = controlsDisabled;
     elements.resetSaveDirectory.disabled = controlsDisabled;
     elements.refresh.disabled = controlsDisabled;
     elements.start.disabled = !state.selectedSourceId || !state.captureConfigReady || phase !== 'idle';
     elements.stop.disabled = phase !== 'recording';
+    syncRegionControlAvailability();
     elements.cancelCountdown.disabled = phase !== 'countdown';
     elements.save.disabled = phase !== 'ready';
     elements.saveWebm.disabled = phase !== 'ready';
@@ -286,6 +387,7 @@
     const selected = state.sources.find((source) => source.id === state.selectedSourceId);
     elements.selectionNote.textContent = selected ? `Capturando: ${selected.name}` : 'Selecciona una fuente para continuar';
     elements.start.disabled = !state.selectedSourceId || !state.captureConfigReady || state.phase !== 'idle';
+    updateRegionHighlight();
   }
 
   async function syncCaptureOptions() {
@@ -301,8 +403,8 @@
     elements.compactStart.disabled = true;
     const options = {
       sourceId: state.selectedSourceId,
-      systemAudio: elements.systemAudio.checked,
-      microphone: elements.microphone.checked
+      systemAudio: elements.captureMode.value === 'video' && elements.systemAudio.checked,
+      microphone: elements.captureMode.value === 'video' && elements.microphone.checked
     };
 
     try {
@@ -310,15 +412,15 @@
       const capabilities = await state.captureConfigQueue;
       if (requestVersion !== state.captureConfigVersion) return;
       state.systemAudioAvailable = capabilities.systemAudioAvailable;
-      elements.systemAudioRow.classList.toggle('is-disabled', !state.systemAudioAvailable);
+      elements.systemAudioRow.classList.toggle('is-disabled', !state.systemAudioAvailable || elements.captureMode.value === 'image');
       elements.systemAudioHint.textContent = state.systemAudioAvailable
         ? 'Disponible en Windows.'
         : 'El audio del sistema requiere Windows.';
-      elements.systemAudio.disabled = !state.systemAudioAvailable || state.phase !== 'idle';
+      elements.systemAudio.disabled = !state.systemAudioAvailable || state.phase !== 'idle' || elements.captureMode.value === 'image';
       if (!state.systemAudioAvailable) elements.systemAudio.checked = false;
       elements.compactMicrophone.checked = elements.microphone.checked;
       elements.compactSystemAudio.checked = elements.systemAudio.checked;
-      elements.compactSystemAudio.disabled = !state.systemAudioAvailable || state.phase !== 'idle';
+      elements.compactSystemAudio.disabled = !state.systemAudioAvailable || state.phase !== 'idle' || elements.captureMode.value === 'image';
       state.captureConfigReady = true;
       elements.start.disabled = !state.selectedSourceId || state.phase !== 'idle';
       elements.compactStart.disabled = elements.start.disabled;
@@ -378,8 +480,9 @@
   }
 
   async function acquireCapture() {
-    const wantsSystemAudio = state.systemAudioAvailable && elements.systemAudio.checked;
-    const wantsMicrophone = elements.microphone.checked;
+    const isVideo = elements.captureMode.value === 'video';
+    const wantsSystemAudio = isVideo && state.systemAudioAvailable && elements.systemAudio.checked;
+    const wantsMicrophone = isVideo && elements.microphone.checked;
     const sizeCaps = {
       1080: { width: 1920, height: 1080 },
       720: { width: 1280, height: 720 },
@@ -441,7 +544,164 @@
     state.hasAudio = audioTracks.length > 0;
   }
 
+  function waitForVideoReady(video) {
+    if (video.videoWidth > 0 && video.videoHeight > 0) return Promise.resolve();
+    return new Promise((resolve, reject) => {
+      const timer = window.setTimeout(() => reject(new Error('No se pudo preparar la vista previa de la pantalla.')), 10000);
+      video.addEventListener('loadedmetadata', () => { window.clearTimeout(timer); resolve(); }, { once: true });
+      video.addEventListener('error', () => { window.clearTimeout(timer); reject(new Error('No se pudo leer la vista previa de la pantalla.')); }, { once: true });
+    });
+  }
+
+  function setRegionPreviewAspect() {
+    const video = elements.regionPreviewVideo;
+    if (!video.videoWidth || !video.videoHeight) return;
+    elements.regionPreviewFrame.style.aspectRatio = `${video.videoWidth} / ${video.videoHeight}`;
+    const scale = Math.min(
+      (elements.regionDialog.clientWidth - 44) / video.videoWidth,
+      window.innerHeight * .65 / video.videoHeight
+    );
+    elements.regionPreviewFrame.style.width = `${Math.floor(video.videoWidth * scale)}px`;
+    elements.regionPreviewFrame.style.height = `${Math.floor(video.videoHeight * scale)}px`;
+  }
+
+  function updateRegionHighlight() {
+    for (const overlay of elements.sourceGrid.querySelectorAll('.capture-region-overlay')) overlay.remove();
+    const selectedCard = [...elements.sourceGrid.querySelectorAll('.source-card')]
+      .find((card) => card.getAttribute('aria-pressed') === 'true');
+    const preview = selectedCard?.querySelector('.source-preview');
+    if (!preview || !state.regionRect || !elements.regionPreviewVideo.videoWidth || !elements.regionPreviewVideo.videoHeight) return;
+    const overlay = document.createElement('span');
+    overlay.className = 'capture-region-overlay';
+    overlay.setAttribute('aria-label', 'Porción seleccionada');
+    overlay.style.left = `${100 * state.regionRect.x / elements.regionPreviewVideo.videoWidth}%`;
+    overlay.style.top = `${100 * state.regionRect.y / elements.regionPreviewVideo.videoHeight}%`;
+    overlay.style.width = `${100 * state.regionRect.width / elements.regionPreviewVideo.videoWidth}%`;
+    overlay.style.height = `${100 * state.regionRect.height / elements.regionPreviewVideo.videoHeight}%`;
+    preview.append(overlay);
+  }
+
+  function updateRegionSelection(event) {
+    if (!state.regionDragStart) return;
+    const bounds = elements.regionPreviewVideo.getBoundingClientRect();
+    const currentX = Math.max(0, Math.min(bounds.width, event.clientX - bounds.left));
+    const currentY = Math.max(0, Math.min(bounds.height, event.clientY - bounds.top));
+    const left = Math.min(state.regionDragStart.x, currentX);
+    const top = Math.min(state.regionDragStart.y, currentY);
+    const width = Math.abs(currentX - state.regionDragStart.x);
+    const height = Math.abs(currentY - state.regionDragStart.y);
+    elements.regionSelectionBox.hidden = false;
+    elements.regionSelectionBox.style.left = `${left}px`;
+    elements.regionSelectionBox.style.top = `${top}px`;
+    elements.regionSelectionBox.style.width = `${width}px`;
+    elements.regionSelectionBox.style.height = `${height}px`;
+    const scaleX = elements.regionPreviewVideo.videoWidth / bounds.width;
+    const scaleY = elements.regionPreviewVideo.videoHeight / bounds.height;
+    state.regionPendingRect = {
+      x: Math.floor(left * scaleX),
+      y: Math.floor(top * scaleY),
+      width: Math.floor(width * scaleX),
+      height: Math.floor(height * scaleY)
+    };
+    const valid = state.regionPendingRect.width >= 16 && state.regionPendingRect.height >= 16;
+    elements.confirmRegionSelection.disabled = !valid;
+    elements.regionSizeLabel.textContent = valid
+      ? `${state.regionPendingRect.width} × ${state.regionPendingRect.height} píxeles`
+      : 'Marca un área de al menos 16 × 16 píxeles';
+  }
+
+  function finishRegionSelection(rectangle) {
+    if (!state.resolveRegionSelection) return;
+    const resolve = state.resolveRegionSelection;
+    state.resolveRegionSelection = null;
+    if (elements.regionDialog.open) elements.regionDialog.close();
+    resolve(rectangle);
+  }
+
+  async function chooseCaptureRegion() {
+    const videoTrack = state.displayStream?.getVideoTracks()[0];
+    if (!videoTrack) throw new Error('No se encontró la pantalla para seleccionar una porción.');
+    elements.regionPreviewVideo.srcObject = new MediaStream([videoTrack]);
+    elements.regionDialog.showModal();
+    await elements.regionPreviewVideo.play();
+    await waitForVideoReady(elements.regionPreviewVideo);
+    setRegionPreviewAspect();
+    state.regionDragStart = null;
+    state.regionPendingRect = null;
+    elements.regionSelectionBox.hidden = true;
+    elements.confirmRegionSelection.disabled = true;
+    elements.regionSizeLabel.textContent = 'Marca un área';
+    return new Promise((resolve) => { state.resolveRegionSelection = resolve; });
+  }
+
+  async function applyRegionToVideo(rectangle) {
+    const video = elements.regionPreviewVideo;
+    const canvas = document.createElement('canvas');
+    canvas.width = rectangle.width;
+    canvas.height = rectangle.height;
+    const context = canvas.getContext('2d', { alpha: false });
+    if (!context) throw new Error('No se pudo preparar el recorte de video.');
+    state.cropCanvas = canvas;
+    state.cropVideo = video;
+    const drawFrame = () => {
+      if (!state.cropCanvas) return;
+      if (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+        context.drawImage(video, rectangle.x, rectangle.y, rectangle.width, rectangle.height, 0, 0, canvas.width, canvas.height);
+      }
+      state.regionAnimationId = requestAnimationFrame(drawFrame);
+    };
+    drawFrame();
+    const croppedStream = canvas.captureStream(30);
+    const audioTracks = state.captureStream.getAudioTracks();
+    state.captureStream = new MediaStream([...croppedStream.getVideoTracks(), ...audioTracks]);
+  }
+
+  function getImageDimensions(width, height) {
+    const caps = {
+      1080: { width: 1920, height: 1080 },
+      720: { width: 1280, height: 720 },
+      480: { width: 854, height: 480 }
+    };
+    const cap = caps[elements.videoSize.value];
+    if (!cap) return { width, height };
+    const scale = Math.min(1, cap.width / width, cap.height / height);
+    return { width: Math.max(1, Math.round(width * scale)), height: Math.max(1, Math.round(height * scale)) };
+  }
+
+  async function captureAndSaveImage() {
+    const video = elements.regionPreviewVideo;
+    if (!video.srcObject) video.srcObject = new MediaStream([state.displayStream.getVideoTracks()[0]]);
+    if (video.paused) await video.play();
+    await waitForVideoReady(video);
+    await new Promise((resolve) => window.setTimeout(resolve, 80));
+    const region = state.regionRect;
+    const sourceX = region?.x ?? 0;
+    const sourceY = region?.y ?? 0;
+    const sourceWidth = region?.width ?? video.videoWidth;
+    const sourceHeight = region?.height ?? video.videoHeight;
+    const dimensions = getImageDimensions(sourceWidth, sourceHeight);
+    const canvas = document.createElement('canvas');
+    canvas.width = dimensions.width;
+    canvas.height = dimensions.height;
+    const context = canvas.getContext('2d', { alpha: elements.format.value === 'png' });
+    if (!context) throw new Error('No se pudo preparar la imagen.');
+    context.drawImage(video, sourceX, sourceY, sourceWidth, sourceHeight, 0, 0, canvas.width, canvas.height);
+    const mimeType = elements.format.value === 'png' ? 'image/png' : 'image/jpeg';
+    const blob = await new Promise((resolve, reject) => canvas.toBlob((image) => image ? resolve(image) : reject(new Error('No se pudo generar el archivo de imagen.')), mimeType, .92));
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+    const selectedSource = state.sources.find((source) => source.id === state.selectedSourceId);
+    const result = await window.electronAPI.saveImage(bytes, elements.format.value, selectedSource?.name || 'grabacion');
+    elements.selectionNote.textContent = `Imagen guardada: ${result.path}`;
+    setStatus('Imagen guardada', 'ready');
+  }
+
   function stopTracks() {
+    if (state.resolveRegionSelection) finishRegionSelection(null);
+    else if (elements.regionDialog.open) elements.regionDialog.close();
+    if (state.regionAnimationId) cancelAnimationFrame(state.regionAnimationId);
+    state.regionAnimationId = null;
+    state.cropCanvas = null;
+    state.cropVideo = null;
     const tracks = new Set([
       ...(state.captureStream?.getTracks() ?? []),
       ...(state.displayStream?.getTracks() ?? []),
@@ -451,6 +711,8 @@
     state.captureStream = null;
     state.displayStream = null;
     state.microphoneStream = null;
+    elements.regionPreviewVideo.pause();
+    elements.regionPreviewVideo.srcObject = null;
     if (state.audioContext && state.audioContext.state !== 'closed') state.audioContext.close().catch(() => {});
     state.audioContext = null;
   }
@@ -466,6 +728,24 @@
       // acquireCapture calls getDisplayMedia before its first await, preserving the user gesture.
       const capturePromise = acquireCapture();
       await capturePromise;
+      state.regionRect = null;
+      elements.captureRegionBadge.hidden = true;
+      if (elements.regionCapture.checked) {
+        const region = await chooseCaptureRegion();
+        if (!region) {
+          stopTracks();
+          elements.captureRegionBadge.hidden = true;
+          state.phase = 'idle';
+          setPhase('idle');
+          setStatus('Selección de porción cancelada');
+          return;
+        }
+        state.regionRect = region;
+        elements.captureRegionBadge.textContent = `PORCIÓN ${region.width} × ${region.height}`;
+        elements.captureRegionBadge.hidden = false;
+        updateRegionHighlight();
+        if (elements.captureMode.value === 'video') await applyRegionToVideo(region);
+      }
       const seconds = Number.parseInt(elements.countdown.value, 10) || 0;
       if (seconds > 0) {
         state.phase = 'countdown';
@@ -479,14 +759,38 @@
           if (remaining <= 0) {
             window.clearInterval(state.countdownTimer);
             state.countdownTimer = null;
-            beginMediaRecording().catch(handleCaptureError);
+            completeCaptureAfterCountdown();
           }
         }, 1000);
       } else {
-        await beginMediaRecording();
+        if (elements.captureMode.value === 'image') await captureImageWorkflow();
+        else await beginMediaRecording();
       }
     } catch (error) {
       await handleCaptureError(error);
+    }
+  }
+
+  async function completeCaptureAfterCountdown() {
+    if (elements.captureMode.value === 'image') await captureImageWorkflow();
+    else await beginMediaRecording().catch(handleCaptureError);
+  }
+
+  async function captureImageWorkflow() {
+    state.phase = 'capturing-image';
+    setPhase('capturing-image');
+    try {
+      setStatus('Generando imagen…', 'busy');
+      await captureAndSaveImage();
+    } catch (error) {
+      await handleCaptureError(error);
+    } finally {
+      stopTracks();
+      state.regionRect = null;
+      elements.captureRegionBadge.hidden = true;
+      updateRegionHighlight();
+      state.phase = 'idle';
+      setPhase('idle');
     }
   }
 
@@ -534,6 +838,7 @@
     }, { once: true });
     state.mediaRecorder.addEventListener('stop', finishMediaRecording, { once: true });
     state.captureStream.getVideoTracks()[0].addEventListener('ended', requestStopRecording, { once: true });
+    state.displayStream.getVideoTracks()[0].addEventListener('ended', requestStopRecording, { once: true });
 
     state.mediaRecorder.start(1000);
     state.startedAt = Date.now();
@@ -677,6 +982,9 @@
     window.clearInterval(state.countdownTimer);
     state.countdownTimer = null;
     stopTracks();
+    state.regionRect = null;
+    elements.captureRegionBadge.hidden = true;
+    updateRegionHighlight();
     state.phase = 'idle';
     setPhase('idle');
     setStatus('Cuenta atrás cancelada');
@@ -695,14 +1003,56 @@
       try { await window.electronAPI.abortRecording(state.recordingId); } catch {}
     }
     state.recordingId = null;
+    state.regionRect = null;
+    elements.captureRegionBadge.hidden = true;
+    updateRegionHighlight();
     state.phase = 'idle';
     setPhase('idle');
-    setStatus('No se pudo iniciar la captura');
-    elements.sourceError.textContent = `No se pudo iniciar la captura: ${message}`;
+    const action = elements.captureMode.value === 'image' ? 'capturar la imagen' : 'iniciar la captura';
+    setStatus(elements.captureMode.value === 'image' ? 'No se pudo generar la imagen' : 'No se pudo iniciar la captura');
+    elements.sourceError.textContent = `No se pudo ${action}: ${message}`;
     elements.sourceError.hidden = false;
   }
 
   elements.refresh.addEventListener('click', loadSources);
+  elements.captureMode.addEventListener('change', () => {
+    setCaptureMode(elements.captureMode.value);
+    setPhase(state.phase);
+    syncCaptureOptions();
+  });
+  elements.compactCaptureMode.addEventListener('change', () => {
+    setCaptureMode(elements.compactCaptureMode.value);
+    setPhase(state.phase);
+    syncCaptureOptions();
+  });
+  elements.regionCapture.addEventListener('change', () => {
+    elements.compactRegionCapture.checked = elements.regionCapture.checked;
+  });
+  elements.compactRegionCapture.addEventListener('change', () => {
+    elements.regionCapture.checked = elements.compactRegionCapture.checked;
+  });
+  elements.regionPreviewVideo.addEventListener('loadedmetadata', setRegionPreviewAspect);
+  elements.regionPreviewVideo.addEventListener('pointerdown', (event) => {
+    if (!elements.regionDialog.open) return;
+    const bounds = elements.regionPreviewVideo.getBoundingClientRect();
+    state.regionDragStart = {
+      x: Math.max(0, Math.min(bounds.width, event.clientX - bounds.left)),
+      y: Math.max(0, Math.min(bounds.height, event.clientY - bounds.top))
+    };
+    elements.regionPreviewVideo.setPointerCapture(event.pointerId);
+    updateRegionSelection(event);
+  });
+  elements.regionPreviewVideo.addEventListener('pointermove', updateRegionSelection);
+  elements.regionPreviewVideo.addEventListener('pointerup', (event) => {
+    updateRegionSelection(event);
+    state.regionDragStart = null;
+  });
+  elements.confirmRegionSelection.addEventListener('click', () => finishRegionSelection(state.regionPendingRect));
+  elements.cancelRegionSelection.addEventListener('click', () => finishRegionSelection(null));
+  elements.regionDialog.addEventListener('cancel', (event) => {
+    event.preventDefault();
+    finishRegionSelection(null);
+  });
   elements.chooseSaveDirectory.addEventListener('click', async () => {
     try {
       updateSaveDirectoryDisplay(await window.electronAPI.chooseSaveDirectory());
@@ -812,6 +1162,7 @@
     }
   });
 
+  setCaptureMode('video');
   elements.compactFormat.value = elements.format.value;
   elements.compactSize.value = elements.videoSize.value;
   elements.compactCountdown.value = elements.countdown.value;

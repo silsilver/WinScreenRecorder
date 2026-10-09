@@ -34,12 +34,14 @@
       <details id="compact-settings" class="compact-settings">
         <summary title="Ajustes de grabación"><span aria-hidden="true">⚙</span> Ajustes</summary>
         <div class="compact-settings-panel">
+          <label class="compact-setting-field" for="compact-capture-mode-select">Capturar como
+            <select id="compact-capture-mode-select" class="compact-select">
+              <option value="video">Video</option>
+              <option value="image">Imagen</option>
+            </select>
+          </label>
           <label class="compact-setting-field" for="compact-format-select">Formato
             <select id="compact-format-select" class="compact-select">
-              <option value="mp4">MP4 · H.264</option>
-              <option value="mkv">MKV · H.264</option>
-              <option value="webm">WebM · VP9 / VP8</option>
-              <option value="gif">GIF animado</option>
             </select>
           </label>
           <label class="compact-setting-field" for="compact-size-select">Tamaño
@@ -63,6 +65,9 @@
           </label>
           <label class="compact-audio-setting" for="compact-system-audio-toggle">
             <input id="compact-system-audio-toggle" type="checkbox" checked> Audio del sistema
+          </label>
+          <label class="compact-audio-setting" for="compact-region-toggle">
+            <input id="compact-region-toggle" type="checkbox"> Capturar una porción
           </label>
           <p class="compact-local-note">Procesamiento local. Los cambios se reflejan en la vista completa.</p>
         </div>
@@ -90,6 +95,7 @@
           <h1>WinScreen <span>Recorder</span></h1>
         </div>
       </div>
+      <div class="window-drag-handle" title="Arrastra desde aquí para mover la ventana"><span aria-hidden="true">⠿</span> Mover ventana</div>
       <div class="topbar-actions">
         <div class="status-pill" id="status-pill" role="status" aria-live="polite">
           <span class="status-dot" id="status-dot" aria-hidden="true"></span>
@@ -123,12 +129,14 @@
           <div><p class="eyebrow">PREFERENCIAS</p><h3 id="settings-title">Configuración</h3></div>
         </div>
 
+        <label class="field-label" for="capture-mode-select">Capturar como</label>
+        <select id="capture-mode-select" class="select-control">
+          <option value="video">Video</option>
+          <option value="image">Imagen</option>
+        </select>
+
         <label class="field-label" for="format-select">Formato de salida</label>
         <select id="format-select" class="select-control">
-          <option value="mp4">MP4 · H.264</option>
-          <option value="mkv">MKV · H.264</option>
-          <option value="webm">WebM · VP9 / VP8</option>
-          <option value="gif">GIF animado</option>
         </select>
         <p class="field-hint">MP4, MKV y GIF se convierten al terminar.</p>
 
@@ -174,6 +182,12 @@
         </label>
         <p class="field-hint system-audio-hint" id="system-audio-hint">Disponible en Windows.</p>
 
+        <label class="toggle-row" for="region-capture-toggle" id="region-capture-row">
+          <span class="toggle-copy"><span class="toggle-title">Capturar una porción</span><span class="toggle-detail">Selecciona un área dentro de una pantalla</span></span>
+          <input id="region-capture-toggle" class="toggle-input" type="checkbox">
+          <span class="toggle-switch" aria-hidden="true"></span>
+        </label>
+
         <div class="settings-footer">
           <span class="shield-icon" aria-hidden="true">✓</span>
           <span>La grabación se procesa en este equipo.</span>
@@ -185,7 +199,7 @@
           <div class="sources-heading">
             <div class="panel-heading">
               <span class="step-number">02</span>
-              <div><p class="eyebrow">ÁREA DE CAPTURA</p><h3 id="sources-title">Pantalla o ventana</h3></div>
+              <div><p class="eyebrow">ÁREA DE CAPTURA</p><div class="source-title-row"><h3 id="sources-title">Pantalla o ventana</h3><span id="capture-mode-badge" class="capture-mode-badge is-video">VIDEO</span><span id="capture-region-badge" class="capture-region-badge" hidden></span></div></div>
             </div>
             <button id="refresh-sources" class="quiet-button" type="button"><span aria-hidden="true">↻</span> Actualizar</button>
           </div>
@@ -206,7 +220,7 @@
           </div>
 
           <div id="countdown-actions" class="action-row" hidden>
-            <div class="countdown-message"><span class="countdown-ring" aria-hidden="true"></span><span>La grabación comienza en <strong id="countdown-number">3</strong></span></div>
+            <div class="countdown-message"><span class="countdown-ring" aria-hidden="true"></span><span id="countdown-copy">La grabación comienza en <strong id="countdown-number">3</strong></span></div>
             <button id="cancel-countdown" class="secondary-button" type="button">Cancelar</button>
           </div>
 
@@ -249,6 +263,20 @@
       <div><dt>Versión</dt><dd id="developer-version">—</dd></div>
       <div><dt>Aplicación</dt><dd>Grabación local de pantalla y ventanas para Windows.</dd></div>
     </dl>
+  </dialog>
+  <dialog id="region-dialog" class="region-dialog" aria-labelledby="region-dialog-title">
+    <div class="dialog-heading">
+      <div><p class="eyebrow">ÁREA DE CAPTURA</p><h2 id="region-dialog-title">Selecciona la porción</h2></div>
+    </div>
+    <p class="region-dialog-copy">Arrastra sobre la vista para marcar el área que quieres capturar.</p>
+    <div id="region-preview-frame" class="region-preview-frame">
+      <video id="region-preview-video" muted playsinline></video>
+      <div id="region-selection-box" class="region-selection-box" hidden></div>
+    </div>
+    <div class="region-dialog-actions">
+      <span id="region-size-label" class="region-size-label">Marca un área</span>
+      <div><button id="cancel-region-selection" class="secondary-button" type="button">Cancelar</button><button id="confirm-region-selection" class="primary-button" type="button" disabled>Usar esta área</button></div>
+    </div>
   </dialog>
 </body>
 </html>

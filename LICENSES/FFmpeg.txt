@@ -1,0 +1,19 @@
+WinScreen Recorder distributes FFmpeg as a separate executable. It is not
+linked into Electron or the application code.
+
+Build source and pinned release:
+- FFmpeg commit: https://github.com/FFmpeg/FFmpeg/commit/b91a82d6dd
+- Windows x64 LGPL build: https://github.com/BtbN/FFmpeg-Builds/releases/tag/autobuild-2026-10-09-14-16
+- Archive: ffmpeg-N-127259-gb91a82d6dd-win64-lgpl.zip
+- Archive SHA-256: 0a9d0adfeb2c2008bdc08bdeb1953737c0eecb21ca7d98950ec30a016e442ea2
+- License: GNU Lesser General Public License, version 3 or later (LGPL-3.0-or-later)
+
+The pinned build configuration does not enable GPL or non-free components.
+H.264 software encoding uses OpenH264; its BSD license is included as
+OpenH264.txt. The GCC Runtime Library Exception notice is included separately.
+The FFmpeg build license and component notices are in FFmpeg-BtbN.txt and next
+to the packaged executable. The exact FFmpeg source revision is linked above.
+
+This application invokes ffmpeg.exe with fixed, application-defined argument
+lists and does not execute a shell command. It does not include libx264 or
+libx265.

@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; media-src blob:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-src 'none'; form-action 'none'">
+  <meta name="color-scheme" content="dark">
+  <title>WinScreen Recorder — Captura local</title>
+  <link rel="stylesheet" href="styles.css">
+  <script src="renderer.js" defer></script>
+</head>
+<body>
+  <main class="app-shell">
+    <section id="compact-toolbar" class="compact-toolbar" aria-label="Controles compactos" hidden>
+      <div class="compact-brand" title="Arrastra la barra para moverla">
+        <img class="compact-brand-mark" src="brand-icon.svg" alt="" aria-hidden="true">
+        <span>WinScreen</span>
+      </div>
+
+      <label class="compact-source-field" for="compact-source-select">
+        <span>FUENTE DE CAPTURA</span>
+        <select id="compact-source-select" class="compact-select" title="Selecciona una pantalla o ventana">
+          <option value="">Buscando fuentes…</option>
+        </select>
+      </label>
+      <button id="compact-refresh-sources" class="compact-icon-button" type="button" title="Actualizar pantallas y ventanas" aria-label="Actualizar fuentes">↻</button>
+
+      <div class="compact-status" role="status" aria-live="polite">
+        <span id="compact-status-dot" class="compact-status-dot" aria-hidden="true"></span>
+        <span id="compact-status-text">Listo</span>
+        <time id="compact-timer">00:00</time>
+      </div>
+
+      <details id="compact-settings" class="compact-settings">
+        <summary title="Ajustes de grabación"><span aria-hidden="true">⚙</span> Ajustes</summary>
+        <div class="compact-settings-panel">
+          <label class="compact-setting-field" for="compact-format-select">Formato
+            <select id="compact-format-select" class="compact-select">
+              <option value="mp4">MP4 · H.264</option>
+              <option value="mkv">MKV · H.264</option>
+              <option value="webm">WebM · VP9 / VP8</option>
+              <option value="gif">GIF animado</option>
+            </select>
+          </label>
+          <label class="compact-setting-field" for="compact-size-select">Tamaño
+            <select id="compact-size-select" class="compact-select">
+              <option value="original">Original</option>
+              <option value="1080">Hasta 1080p</option>
+              <option value="720">Hasta 720p</option>
+              <option value="480">Hasta 480p</option>
+            </select>
+          </label>
+          <label class="compact-setting-field" for="compact-countdown-select">Cuenta atrás
+            <select id="compact-countdown-select" class="compact-select">
+              <option value="0">Desactivada</option>
+              <option value="3">3 segundos</option>
+              <option value="5">5 segundos</option>
+              <option value="10">10 segundos</option>
+            </select>
+          </label>
+          <label class="compact-audio-setting" for="compact-microphone-toggle">
+            <input id="compact-microphone-toggle" type="checkbox"> Micrófono
+          </label>
+          <label class="compact-audio-setting" for="compact-system-audio-toggle">
+            <input id="compact-system-audio-toggle" type="checkbox" checked> Audio del sistema
+          </label>
+          <p class="compact-local-note">Procesamiento local. Los cambios se reflejan en la vista completa.</p>
+        </div>
+      </details>
+
+      <div class="compact-actions">
+        <button id="compact-start" class="primary-button compact-action compact-start" type="button" title="Iniciar grabación" aria-label="Iniciar grabación"><span class="record-icon" aria-hidden="true"></span>Grabar</button>
+        <button id="compact-cancel-countdown" class="secondary-button compact-action" type="button" hidden>Cancelar</button>
+        <button id="compact-stop" class="stop-button compact-action" type="button" hidden>Detener</button>
+        <button id="compact-save" class="primary-button compact-action" type="button" hidden>Guardar</button>
+        <button id="compact-discard" class="quiet-button compact-action" type="button" hidden>Descartar</button>
+      </div>
+      <button id="compact-expand" class="quiet-button compact-expand" type="button" title="Volver a la ventana completa">Vista completa</button>
+      <div class="window-controls compact-window-controls" aria-label="Controles de ventana">
+        <button class="window-control-button" type="button" data-window-action="minimize" title="Minimizar" aria-label="Minimizar">−</button>
+        <button class="window-control-button close-window-button" type="button" data-window-action="close" title="Cerrar en el área de notificación" aria-label="Cerrar en el área de notificación">×</button>
+      </div>
+    </section>
+
+    <header class="topbar">
+      <div class="brand">
+        <img class="brand-mark" src="brand-icon.svg" alt="" aria-hidden="true">
+        <div>
+          <p class="eyebrow">CAPTURA DE ESCRITORIO</p>
+          <h1>WinScreen <span>Recorder</span></h1>
+        </div>
+      </div>
+      <div class="topbar-actions">
+        <button id="compact-toggle" class="quiet-button compact-toggle" type="button" title="Abrir mini barra · Ctrl+Mayús+M" aria-pressed="false">Mini barra</button>
+        <div class="status-pill" id="status-pill" role="status" aria-live="polite">
+          <span class="status-dot" id="status-dot" aria-hidden="true"></span>
+          <span id="status-text">Listo para grabar</span>
+        </div>
+        <div class="window-controls" aria-label="Controles de ventana">
+          <button class="window-control-button" type="button" data-window-action="minimize" title="Minimizar" aria-label="Minimizar">−</button>
+          <button class="window-control-button" type="button" data-window-action="toggle-maximize" title="Maximizar o restaurar" aria-label="Maximizar o restaurar">□</button>
+          <button class="window-control-button close-window-button" type="button" data-window-action="close" title="Cerrar en el área de notificación" aria-label="Cerrar en el área de notificación">×</button>
+        </div>
+      </div>
+    </header>
+
+    <section class="intro">
+      <div>
+        <p class="eyebrow">UNA CAPTURA, A TU MANERA</p>
+        <h2>Prepara tu grabación</h2>
+        <p class="intro-copy">Elige una pantalla o ventana y ajusta el audio antes de empezar.</p>
+      </div>
+      <div class="timer-card" aria-label="Duración de la grabación">
+        <span class="timer-label">DURACIÓN</span>
+        <time id="timer">00:00</time>
+      </div>
+    </section>
+
+    <div class="content-grid">
+      <section class="panel settings-panel" aria-labelledby="settings-title">
+        <div class="panel-heading">
+          <span class="step-number">01</span>
+          <div><p class="eyebrow">PREFERENCIAS</p><h3 id="settings-title">Configuración</h3></div>
+        </div>
+
+        <label class="field-label" for="format-select">Formato de salida</label>
+        <select id="format-select" class="select-control">
+          <option value="mp4">MP4 · H.264</option>
+          <option value="mkv">MKV · H.264</option>
+          <option value="webm">WebM · VP9 / VP8</option>
+          <option value="gif">GIF animado</option>
+        </select>
+        <p class="field-hint">MP4, MKV y GIF se convierten al terminar.</p>
+
+        <label class="field-label" for="video-size-select">Tamaño del video</label>
+        <select id="video-size-select" class="select-control">
+          <option value="original">Original (máximo disponible)</option>
+          <option value="1080">Hasta 1080p</option>
+          <option value="720">Hasta 720p</option>
+          <option value="480">Hasta 480p</option>
+        </select>
+        <p class="field-hint">Conserva la proporción y no amplía fuentes pequeñas.</p>
+
+        <label class="field-label countdown-label" for="countdown-select">Cuenta atrás</label>
+        <select id="countdown-select" class="select-control">
+          <option value="0">Desactivada</option>
+          <option value="3" selected>3 segundos</option>
+          <option value="5">5 segundos</option>
+          <option value="10">10 segundos</option>
+        </select>
+
+        <div class="divider"></div>
+
+        <label class="toggle-row" for="microphone-toggle">
+          <span class="toggle-copy"><span class="toggle-title">Micrófono</span><span class="toggle-detail">Incluir mi voz</span></span>
+          <input id="microphone-toggle" class="toggle-input" type="checkbox">
+          <span class="toggle-switch" aria-hidden="true"></span>
+        </label>
+
+        <label class="toggle-row" for="system-audio-toggle" id="system-audio-row">
+          <span class="toggle-copy"><span class="toggle-title">Audio del sistema</span><span class="toggle-detail">Incluir el sonido de Windows</span></span>
+          <input id="system-audio-toggle" class="toggle-input" type="checkbox" checked>
+          <span class="toggle-switch" aria-hidden="true"></span>
+        </label>
+        <p class="field-hint system-audio-hint" id="system-audio-hint">Disponible en Windows.</p>
+
+        <div class="settings-footer">
+          <span class="shield-icon" aria-hidden="true">✓</span>
+          <span>La grabación se procesa en este equipo.</span>
+        </div>
+      </section>
+
+      <section class="panel sources-panel" aria-labelledby="sources-title">
+        <div id="capture-area" class="capture-area" aria-disabled="false">
+          <div class="sources-heading">
+            <div class="panel-heading">
+              <span class="step-number">02</span>
+              <div><p class="eyebrow">ÁREA DE CAPTURA</p><h3 id="sources-title">Pantalla o ventana</h3></div>
+            </div>
+            <button id="refresh-sources" class="quiet-button" type="button"><span aria-hidden="true">↻</span> Actualizar</button>
+          </div>
+          <p class="panel-copy">Selecciona lo que quieres mostrar en tu grabación.</p>
+
+          <div id="source-grid" class="source-grid" aria-live="polite" aria-busy="false">
+            <div class="empty-state"><span class="loader" aria-hidden="true"></span><span>Buscando pantallas y ventanas…</span></div>
+          </div>
+          <p id="source-error" class="message message-error" role="alert" hidden></p>
+        </div>
+
+        <div class="capture-footer">
+          <div id="idle-actions" class="action-row">
+            <span class="selection-note" id="selection-note">Selecciona una fuente para continuar</span>
+            <button id="start-recording" class="primary-button" type="button" disabled>
+              <span class="record-icon" aria-hidden="true"></span> Iniciar grabación
+            </button>
+          </div>
+
+          <div id="countdown-actions" class="action-row" hidden>
+            <div class="countdown-message"><span class="countdown-ring" aria-hidden="true"></span><span>La grabación comienza en <strong id="countdown-number">3</strong></span></div>
+            <button id="cancel-countdown" class="secondary-button" type="button">Cancelar</button>
+          </div>
+
+          <div id="recording-actions" class="action-row" hidden>
+            <span class="recording-label"><span class="recording-dot" aria-hidden="true"></span> Grabando ahora</span>
+            <button id="stop-recording" class="stop-button" type="button"><span class="stop-icon" aria-hidden="true"></span> Detener</button>
+          </div>
+
+          <div id="save-actions" class="save-actions" hidden>
+            <div class="save-copy"><strong id="save-title">Tu captura está lista</strong><span id="save-description">Elige dónde guardarla. La transcripción con audio se generará automáticamente.</span><span id="save-progress" class="save-progress" role="status" aria-live="polite" hidden></span></div>
+            <div class="save-buttons">
+              <button id="save-webm" class="secondary-button" type="button" hidden>Guardar original WebM</button>
+              <button id="discard-recording" class="quiet-button" type="button">Descartar</button>
+              <button id="save-recording" class="primary-button" type="button">Guardar captura</button>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <footer class="app-footer">
+      <span>WinScreen Recorder <span class="footer-separator">·</span> Captura local, sin nube</span>
+      <div class="footer-actions">
+        <button id="developer-info-button" class="footer-button" type="button">Desarrollador</button>
+        <details class="license-details">
+          <summary>Licencias</summary>
+          <p>Esta aplicación usa FFmpeg bajo LGPLv3 o posterior, OpenH264 bajo BSD-2-Clause y whisper.cpp bajo MIT. Los avisos de licencia y el origen de los componentes se incluyen con la instalación.</p>
+        </details>
+      </div>
+    </footer>
+  </main>
+  <dialog id="developer-dialog" class="info-dialog" aria-labelledby="developer-dialog-title">
+    <div class="dialog-heading">
+      <div><p class="eyebrow">ACERCA DE</p><h2 id="developer-dialog-title">WinScreen Recorder</h2></div>
+      <button id="close-developer-dialog" class="quiet-button dialog-close" type="button" aria-label="Cerrar">×</button>
+    </div>
+    <dl class="developer-details">
+      <div><dt>Desarrollador</dt><dd id="developer-name">Alan Suástegui Vázquez</dd></div>
+      <div><dt>Correo</dt><dd id="developer-email">sil.silver@gmail.com</dd></div>
+      <div><dt>Versión</dt><dd id="developer-version">—</dd></div>
+      <div><dt>Aplicación</dt><dd>Grabación local de pantalla y ventanas para Windows.</dd></div>
+    </dl>
+  </dialog>
+</body>
+</html>

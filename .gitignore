@@ -1,0 +1,14 @@
+node_modules/
+dist/
+vendor/ffmpeg/
+vendor/whisper/
+*.log
+npm-debug.log*
+.DS_Store
+.env
+.env.*
+!.env.example
+.ffmpeg-stage-*/
+.ffmpeg-backup-*/
+.whisper-stage-*/
+.whisper-backup-*/

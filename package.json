@@ -1,0 +1,62 @@
+{
+  "name": "winscreen-recorder",
+  "version": "1.0.0",
+  "description": "Windows screen and window recorder to standard formats",
+  "author": {
+    "name": "Alan Suástegui Vázquez",
+    "email": "sil.silver@gmail.com"
+  },
+  "productName": "WinScreen Recorder",
+  "main": "main.js",
+  "scripts": {
+    "prepare:whisper": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/prepare-whisper.ps1",
+    "start": "npm run prepare:ffmpeg && npm run prepare:whisper && electron .",
+    "prepare:ffmpeg": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/prepare-ffmpeg.ps1",
+    "dist:win": "npm run prepare:ffmpeg && npm run prepare:whisper && electron-builder --win nsis --x64",
+    "check": "node --check main.js && node --check preload.js && node --check src/renderer.js && node --check src/permission-policy.js",
+    "test": "node --test"
+  },
+  "devDependencies": {
+    "electron": "44.7.0",
+    "electron-builder": "26.15.3"
+  },
+  "build": {
+    "appId": "org.iepc.winscreenrecorder",
+    "productName": "WinScreen Recorder",
+    "asar": true,
+    "files": [
+      "main.js",
+      "preload.js",
+      "package.json",
+      "src/**/*",
+      "README.md",
+      "LICENSES/**/*",
+      "!node_modules/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "vendor/ffmpeg",
+        "to": "ffmpeg"
+      },
+      {
+        "from": "vendor/whisper",
+        "to": "whisper"
+      },
+      {
+        "from": "LICENSES",
+        "to": "licenses"
+      }
+    ],
+    "win": {
+      "icon": "src/app-icon.ico",
+      "target": ["nsis"],
+      "artifactName": "WinScreen-Recorder-${version}-Setup.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
+  }
+}

@@ -12,35 +12,49 @@
 <body>
   <main class="app-shell">
     <section id="compact-toolbar" class="compact-toolbar" aria-label="Controles compactos" hidden>
-      <div class="compact-brand" title="Arrastra la barra para moverla">
-        <img class="compact-brand-mark" src="brand-icon.svg" alt="" aria-hidden="true">
-        <span>WinScreen</span>
+      <div class="compact-titlebar">
+        <div class="compact-drag-handle" title="Arrastra desde aquí para mover la mini barra">
+          <span aria-hidden="true">⠿</span><span>Mover mini barra</span>
+        </div>
+        <div class="compact-window-actions">
+          <button id="compact-expand" class="quiet-button compact-expand" type="button" title="Volver a la ventana completa">Vista completa</button>
+          <div class="window-controls compact-window-controls" aria-label="Controles de ventana">
+            <button class="window-control-button" type="button" data-window-action="minimize" title="Minimizar" aria-label="Minimizar">−</button>
+            <button class="window-control-button close-window-button" type="button" data-window-action="close" title="Cerrar en el área de notificación" aria-label="Cerrar en el área de notificación">×</button>
+          </div>
+        </div>
       </div>
 
-      <label class="compact-source-field" for="compact-source-select">
-        <span>FUENTE DE CAPTURA</span>
-        <select id="compact-source-select" class="compact-select" title="Selecciona una pantalla o ventana">
-          <option value="">Buscando fuentes…</option>
-        </select>
-      </label>
-      <label class="compact-mode-field" for="compact-capture-mode-select">
-        <span>CAPTURAR COMO</span>
-        <select id="compact-capture-mode-select" class="compact-select" title="Elige entre capturar video o imagen">
-          <option value="video">Video</option>
-          <option value="image">Imagen</option>
-        </select>
-      </label>
-      <button id="compact-refresh-sources" class="compact-icon-button" type="button" title="Actualizar pantallas y ventanas" aria-label="Actualizar fuentes">↻</button>
+      <div id="compact-controls-row" class="compact-controls-row">
+        <div class="compact-brand" aria-label="WinScreen Recorder">
+          <img class="compact-brand-mark" src="brand-icon.svg" alt="" aria-hidden="true">
+          <span>WinScreen</span>
+        </div>
 
-      <div class="compact-status" role="status" aria-live="polite">
-        <span id="compact-status-dot" class="compact-status-dot" aria-hidden="true"></span>
-        <span id="compact-status-text">Listo</span>
-        <time id="compact-timer">00:00</time>
-      </div>
+        <label class="compact-source-field" for="compact-source-select">
+          <span>FUENTE DE CAPTURA</span>
+          <select id="compact-source-select" class="compact-select" title="Selecciona una pantalla o ventana">
+            <option value="">Buscando fuentes…</option>
+          </select>
+        </label>
+        <label class="compact-mode-field" for="compact-capture-mode-select">
+          <span>CAPTURAR COMO</span>
+          <select id="compact-capture-mode-select" class="compact-select" title="Elige entre capturar video o imagen">
+            <option value="video">Video</option>
+            <option value="image">Imagen</option>
+          </select>
+        </label>
+        <button id="compact-refresh-sources" class="compact-icon-button" type="button" title="Actualizar pantallas y ventanas" aria-label="Actualizar fuentes">↻</button>
 
-      <details id="compact-settings" class="compact-settings">
-        <summary title="Ajustes de grabación"><span aria-hidden="true">⚙</span> Ajustes</summary>
-        <div class="compact-settings-panel">
+        <div class="compact-status" role="status" aria-live="polite">
+          <span id="compact-status-dot" class="compact-status-dot" aria-hidden="true"></span>
+          <span id="compact-status-text">Listo</span>
+          <time id="compact-timer">00:00</time>
+        </div>
+
+        <details id="compact-settings" class="compact-settings">
+          <summary title="Ajustes de grabación"><span aria-hidden="true">⚙</span> Ajustes</summary>
+          <div class="compact-settings-panel">
           <label class="compact-setting-field" for="compact-format-select">Formato
             <select id="compact-format-select" class="compact-select">
             </select>
@@ -70,21 +84,17 @@
           <label class="compact-audio-setting" for="compact-region-toggle">
             <input id="compact-region-toggle" type="checkbox"> Capturar una porción
           </label>
-          <p class="compact-local-note">Procesamiento local. Los cambios se reflejan en la vista completa.</p>
-        </div>
-      </details>
+            <p class="compact-local-note">Procesamiento local. Los cambios se reflejan en la vista completa.</p>
+          </div>
+        </details>
 
-      <div class="compact-actions">
-        <button id="compact-start" class="primary-button compact-action compact-start" type="button" title="Iniciar grabación" aria-label="Iniciar grabación"><span class="record-icon" aria-hidden="true"></span>Grabar</button>
-        <button id="compact-cancel-countdown" class="secondary-button compact-action" type="button" hidden>Cancelar</button>
-        <button id="compact-stop" class="stop-button compact-action" type="button" hidden>Detener</button>
-        <button id="compact-save" class="primary-button compact-action" type="button" hidden>Guardar</button>
-        <button id="compact-discard" class="quiet-button compact-action" type="button" hidden>Descartar</button>
-      </div>
-      <button id="compact-expand" class="quiet-button compact-expand" type="button" title="Volver a la ventana completa">Vista completa</button>
-      <div class="window-controls compact-window-controls" aria-label="Controles de ventana">
-        <button class="window-control-button" type="button" data-window-action="minimize" title="Minimizar" aria-label="Minimizar">−</button>
-        <button class="window-control-button close-window-button" type="button" data-window-action="close" title="Cerrar en el área de notificación" aria-label="Cerrar en el área de notificación">×</button>
+        <div class="compact-actions">
+          <button id="compact-start" class="primary-button compact-action compact-start" type="button" title="Iniciar grabación" aria-label="Iniciar grabación"><span class="record-icon" aria-hidden="true"></span>Grabar</button>
+          <button id="compact-cancel-countdown" class="secondary-button compact-action" type="button" hidden>Cancelar</button>
+          <button id="compact-stop" class="stop-button compact-action" type="button" hidden>Detener</button>
+          <button id="compact-save" class="primary-button compact-action" type="button" hidden>Guardar</button>
+          <button id="compact-discard" class="quiet-button compact-action" type="button" hidden>Descartar</button>
+        </div>
       </div>
     </section>
 

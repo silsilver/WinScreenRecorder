@@ -21,6 +21,7 @@
     chooseSaveDirectory: document.getElementById('choose-save-directory'),
     resetSaveDirectory: document.getElementById('reset-save-directory'),
     compactToolbar: document.getElementById('compact-toolbar'),
+    compactControlsRow: document.getElementById('compact-controls-row'),
     compactSource: document.getElementById('compact-source-select'),
     compactRefresh: document.getElementById('compact-refresh-sources'),
     compactStatusDot: document.getElementById('compact-status-dot'),
@@ -1083,6 +1084,9 @@
     const expanded = elements.compactSettings.open;
     document.body.classList.toggle('compact-settings-expanded', expanded);
     const settingsPanel = elements.compactSettings.querySelector('.compact-settings-panel');
+    if (expanded) {
+      settingsPanel.style.top = `${Math.ceil(elements.compactControlsRow.getBoundingClientRect().bottom + 12)}px`;
+    }
     const panelHeight = settingsPanel.scrollHeight;
     const requestedHeight = expanded
       ? Math.ceil(Math.max(settingsPanel.getBoundingClientRect().top + panelHeight + 16, panelHeight + 96))

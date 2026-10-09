@@ -129,12 +129,6 @@
           <div><p class="eyebrow">PREFERENCIAS</p><h3 id="settings-title">Configuración</h3></div>
         </div>
 
-        <label class="field-label" for="capture-mode-select">Capturar como</label>
-        <select id="capture-mode-select" class="select-control">
-          <option value="video">Video</option>
-          <option value="image">Imagen</option>
-        </select>
-
         <label class="field-label" for="format-select">Formato de salida</label>
         <select id="format-select" class="select-control">
         </select>
@@ -202,6 +196,13 @@
               <div><p class="eyebrow">ÁREA DE CAPTURA</p><div class="source-title-row"><h3 id="sources-title">Pantalla o ventana</h3><span id="capture-mode-badge" class="capture-mode-badge is-video">VIDEO</span><span id="capture-region-badge" class="capture-region-badge" hidden></span></div></div>
             </div>
             <button id="refresh-sources" class="quiet-button" type="button"><span aria-hidden="true">↻</span> Actualizar</button>
+          </div>
+          <div class="capture-mode-row">
+            <label class="capture-mode-label" for="capture-mode-select">Tipo de captura</label>
+            <select id="capture-mode-select" class="select-control capture-mode-select">
+              <option value="video">Video</option>
+              <option value="image">Imagen</option>
+            </select>
           </div>
           <p class="panel-copy">Selecciona lo que quieres mostrar en tu grabación.</p>
 

@@ -195,8 +195,9 @@ body.compact-mode .compact-toolbar { display: flex; }
 .compact-toolbar { min-height: 100%; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid rgba(155, 177, 214, .2); border-radius: 13px; background: linear-gradient(145deg, rgba(21, 32, 53, .97), rgba(15, 24, 41, .96)); box-shadow: 0 10px 28px rgba(0, 0, 0, .3); -webkit-app-region: drag; user-select: none; }
 .compact-brand { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; color: #e7edff; font-size: 12px; font-weight: 700; white-space: nowrap; }
 .compact-brand-mark { width: 27px; height: 27px; border-radius: 8px; }
-.compact-source-field, .compact-setting-field { display: flex; flex-direction: column; gap: 5px; color: #8c9ab1; font-size: 8px; font-weight: 700; letter-spacing: .08em; }
+.compact-source-field, .compact-mode-field, .compact-setting-field { display: flex; flex-direction: column; gap: 5px; color: #8c9ab1; font-size: 8px; font-weight: 700; letter-spacing: .08em; }
 .compact-source-field { flex: 1 1 240px; min-width: 150px; max-width: 340px; }
+.compact-mode-field { flex: 0 0 112px; -webkit-app-region: no-drag; }
 .compact-select { width: 100%; height: 36px; padding: 0 9px; border: 1px solid rgba(155, 177, 214, .25); border-radius: 8px; color: #f1f5ff; background: rgba(14, 23, 41, .88); font-size: 10px; letter-spacing: normal; }
 .compact-select:disabled { opacity: .55; }
 .compact-icon-button { width: 34px; min-width: 34px; height: 36px; border: 1px solid rgba(155, 177, 214, .16); border-radius: 8px; color: #c2cdea; background: rgba(255, 255, 255, .035); font-size: 19px; cursor: pointer; }
@@ -269,7 +270,8 @@ body.compact-mode .compact-toolbar { display: flex; }
   .compact-toolbar { gap: 7px; padding: 8px; }
   .compact-brand { gap: 0; }
   .compact-brand > span { display: none; }
-  .compact-source-field { min-width: 125px; }
+  .compact-source-field { min-width: 105px; }
+  .compact-mode-field { flex-basis: 94px; }
   .compact-status { min-width: 72px; grid-template-columns: 7px minmax(35px, 1fr); gap: 3px 5px; }
   .compact-status > span:nth-child(2) { max-width: 72px; }
   .compact-settings summary { gap: 4px; padding: 0 7px; }

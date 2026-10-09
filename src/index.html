@@ -23,6 +23,13 @@
           <option value="">Buscando fuentes…</option>
         </select>
       </label>
+      <label class="compact-mode-field" for="compact-capture-mode-select">
+        <span>CAPTURAR COMO</span>
+        <select id="compact-capture-mode-select" class="compact-select" title="Elige entre capturar video o imagen">
+          <option value="video">Video</option>
+          <option value="image">Imagen</option>
+        </select>
+      </label>
       <button id="compact-refresh-sources" class="compact-icon-button" type="button" title="Actualizar pantallas y ventanas" aria-label="Actualizar fuentes">↻</button>
 
       <div class="compact-status" role="status" aria-live="polite">
@@ -34,12 +41,6 @@
       <details id="compact-settings" class="compact-settings">
         <summary title="Ajustes de grabación"><span aria-hidden="true">⚙</span> Ajustes</summary>
         <div class="compact-settings-panel">
-          <label class="compact-setting-field" for="compact-capture-mode-select">Capturar como
-            <select id="compact-capture-mode-select" class="compact-select">
-              <option value="video">Video</option>
-              <option value="image">Imagen</option>
-            </select>
-          </label>
           <label class="compact-setting-field" for="compact-format-select">Formato
             <select id="compact-format-select" class="compact-select">
             </select>

@@ -327,10 +327,10 @@ function setWindowMode(compact) {
   return { compact, settingsExpanded: compactSettingsExpanded };
 }
 
-function setCompactSettingsExpanded(expanded) {
+function setCompactSettingsExpanded(expanded, requestedHeight) {
   if (!compactModeEnabled || compactSettingsExpanded === expanded) return compactSettingsExpanded;
   const [width] = mainWindow.getSize();
-  mainWindow.setSize(width, expanded ? 520 : 160, true);
+  mainWindow.setSize(width, expanded ? requestedHeight : 160, true);
   compactSettingsExpanded = expanded;
   return compactSettingsExpanded;
 }
@@ -838,9 +838,12 @@ function registerIpcHandlers() {
     } else if (action === 'close') mainWindow.close();
     else throw new Error('La acción de ventana solicitada no es válida.');
   });
-  registerHandler('set-compact-settings-open', async (expanded) => {
+  registerHandler('set-compact-settings-open', async (expanded, requestedHeight) => {
     if (typeof expanded !== 'boolean') throw new Error('El estado de ajustes compactos no es válido.');
-    return setCompactSettingsExpanded(expanded);
+    if (expanded && (!Number.isInteger(requestedHeight) || requestedHeight < 160 || requestedHeight > 1200)) {
+      throw new Error('El tamaño solicitado para los ajustes compactos no es válido.');
+    }
+    return setCompactSettingsExpanded(expanded, requestedHeight);
   });
 
   registerHandler('get-sources', async () => {

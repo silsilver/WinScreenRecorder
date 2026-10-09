@@ -1080,7 +1080,14 @@
   elements.compactSource.addEventListener('change', () => selectSource(elements.compactSource.value));
   elements.compactRefresh.addEventListener('click', loadSources);
   elements.compactSettings.addEventListener('toggle', () => {
-    window.electronAPI.setCompactSettingsOpen(elements.compactSettings.open).catch((error) => {
+    const expanded = elements.compactSettings.open;
+    document.body.classList.toggle('compact-settings-expanded', expanded);
+    const settingsPanel = elements.compactSettings.querySelector('.compact-settings-panel');
+    const panelHeight = settingsPanel.scrollHeight;
+    const requestedHeight = expanded
+      ? Math.ceil(Math.max(settingsPanel.getBoundingClientRect().top + panelHeight + 16, panelHeight + 96))
+      : undefined;
+    window.electronAPI.setCompactSettingsOpen(expanded, requestedHeight).catch((error) => {
       setStatus(`No se pudieron abrir los ajustes: ${error.message}`);
     });
   });

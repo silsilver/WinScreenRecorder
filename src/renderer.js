@@ -289,11 +289,16 @@
     elements.saveActions.hidden = phase !== 'ready' && phase !== 'saving';
 
     const controlsDisabled = busyPhases.has(phase) || phase === 'ready';
+    const imageMode = elements.captureMode.value === 'image';
+    const countdownDisabled = controlsDisabled || imageMode;
     elements.captureMode.disabled = controlsDisabled;
     elements.compactCaptureMode.disabled = controlsDisabled;
     elements.format.disabled = controlsDisabled;
     elements.videoSize.disabled = controlsDisabled;
-    elements.countdown.disabled = controlsDisabled;
+    elements.countdown.disabled = countdownDisabled;
+    elements.compactCountdown.disabled = countdownDisabled;
+    elements.countdown.previousElementSibling.classList.toggle('is-disabled', countdownDisabled);
+    elements.compactCountdown.closest('.compact-setting-field').classList.toggle('is-disabled', countdownDisabled);
     elements.microphone.disabled = controlsDisabled || elements.captureMode.value === 'image';
     elements.systemAudio.disabled = controlsDisabled || elements.captureMode.value === 'image' || !state.systemAudioAvailable;
     elements.compactMicrophone.disabled = controlsDisabled || elements.captureMode.value === 'image';

@@ -9,6 +9,7 @@ const { pipeline } = require('node:stream/promises');
 const { Transform } = require('node:stream');
 const { fileURLToPath } = require('node:url');
 const { allowMicrophoneRequest } = require('./src/permission-policy');
+const { chooseUniqueMediaPath } = require('./src/save-paths');
 
 const rendererPath = path.join(__dirname, 'src', 'index.html');
 let mainWindow;
@@ -83,6 +84,52 @@ function getWhisperCliPath() {
 
 function getModelPath() {
   return path.join(app.getPath('userData'), 'models', modelConfig.filename);
+}
+
+function getSaveDirectorySettingsPath() {
+  return path.join(app.getPath('userData'), 'save-directory.json');
+}
+
+async function readSaveDirectoryPreference() {
+  try {
+    const settings = JSON.parse(await fsp.readFile(getSaveDirectorySettingsPath(), 'utf8'));
+    return typeof settings.directory === 'string' && settings.directory.trim()
+      ? path.resolve(settings.directory)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+async function getSaveDirectoryStatus() {
+  const directory = await readSaveDirectoryPreference();
+  if (!directory) return { directory: null, available: true };
+  try {
+    return { directory, available: (await fsp.stat(directory)).isDirectory() };
+  } catch {
+    return { directory, available: false };
+  }
+}
+
+async function chooseSaveDirectory() {
+  const current = await readSaveDirectoryPreference();
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: 'Elegir carpeta de guardado',
+    defaultPath: current || app.getPath('videos'),
+    properties: ['openDirectory', 'createDirectory']
+  });
+  if (result.canceled || !result.filePaths[0]) return getSaveDirectoryStatus();
+  const directory = path.resolve(result.filePaths[0]);
+  const stats = await fsp.stat(directory);
+  if (!stats.isDirectory()) throw new Error('La ubicación elegida no es una carpeta válida.');
+  await fsp.mkdir(path.dirname(getSaveDirectorySettingsPath()), { recursive: true });
+  await fsp.writeFile(getSaveDirectorySettingsPath(), JSON.stringify({ directory }), 'utf8');
+  return { directory, available: true };
+}
+
+async function resetSaveDirectory() {
+  await fsp.rm(getSaveDirectorySettingsPath(), { force: true });
+  return { directory: null, available: true };
 }
 
 function notifySaveProgress(stage) {
@@ -522,14 +569,7 @@ function getSubtitlePath(mediaPath) {
 
 function chooseAvailableMediaPath(targetPath) {
   if (fs.existsSync(targetPath)) return targetPath;
-  const parsed = path.parse(targetPath);
-  let candidate = targetPath;
-  let suffix = 2;
-  while (fs.existsSync(candidate) || fs.existsSync(getSubtitlePath(candidate))) {
-    candidate = path.join(parsed.dir, `${parsed.name} (${suffix})${parsed.ext}`);
-    suffix += 1;
-  }
-  return candidate;
+  return chooseUniqueMediaPath(targetPath, (candidate) => fs.existsSync(candidate) || fs.existsSync(getSubtitlePath(candidate)));
 }
 
 function safeCaptureFileName(sourceName) {
@@ -589,19 +629,28 @@ async function saveRecording(id, format) {
   const label = { webm: 'WebM', mp4: 'MP4', mkv: 'MKV', gif: 'GIF' }[format];
   const sourceName = safeCaptureFileName(selectedCapture.source?.name);
   const defaultName = `${sourceName}-${new Date().toISOString().replace(/[:.]/g, '-')}.${format}`;
-  const { filePath: chosenPath } = await dialog.showSaveDialog(mainWindow, {
-    defaultPath: path.join(app.getPath('videos'), defaultName),
-    filters: [{ name: `${label} (${format.toUpperCase()})`, extensions: [format] }],
-    properties: ['showOverwriteConfirmation']
-  });
-  if (!chosenPath) return { status: 'cancelled' };
-
   const currentSession = recordingSession;
-  let targetPath = path.extname(chosenPath).toLowerCase() === `.${format}` ? chosenPath : `${chosenPath}.${format}`;
+  const saveDirectory = await getSaveDirectoryStatus();
+  let overwriteConfirmed = false;
+  let targetPath;
+  if (saveDirectory.directory) {
+    if (!saveDirectory.available) {
+      throw new Error('La carpeta predeterminada ya no está disponible. Elige otra en Preferencias / Configuración o restablécela.');
+    }
+    targetPath = chooseUniqueMediaPath(path.join(saveDirectory.directory, defaultName), (candidate) => fs.existsSync(candidate) || fs.existsSync(getSubtitlePath(candidate)));
+  } else {
+    const { filePath: chosenPath } = await dialog.showSaveDialog(mainWindow, {
+      defaultPath: path.join(app.getPath('videos'), defaultName),
+      filters: [{ name: `${label} (${format.toUpperCase()})`, extensions: [format] }],
+      properties: ['showOverwriteConfirmation']
+    });
+    if (!chosenPath) return { status: 'cancelled' };
+    targetPath = path.extname(chosenPath).toLowerCase() === `.${format}` ? chosenPath : `${chosenPath}.${format}`;
+    overwriteConfirmed = fs.existsSync(targetPath);
+  }
   let temporaryOutput = null;
   let temporarySubtitle = null;
   let stage = 'transcription';
-  const overwriteConfirmed = fs.existsSync(targetPath);
   currentSession.status = 'saving';
   try {
     let subtitlePath = null;
@@ -722,6 +771,9 @@ function registerIpcHandlers() {
       email: author.email
     };
   });
+  registerHandler('get-save-directory', getSaveDirectoryStatus);
+  registerHandler('choose-save-directory', chooseSaveDirectory);
+  registerHandler('reset-save-directory', resetSaveDirectory);
 
   registerHandler('set-compact-mode', async (compact) => {
     if (typeof compact !== 'boolean') throw new Error('El modo compacto solicitado no es válido.');

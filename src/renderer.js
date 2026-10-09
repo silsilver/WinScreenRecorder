@@ -3,6 +3,9 @@
     statusPill: document.getElementById('status-pill'),
     statusText: document.getElementById('status-text'),
     compactToggle: document.getElementById('compact-toggle'),
+    saveDirectoryDisplay: document.getElementById('save-directory-display'),
+    chooseSaveDirectory: document.getElementById('choose-save-directory'),
+    resetSaveDirectory: document.getElementById('reset-save-directory'),
     compactToolbar: document.getElementById('compact-toolbar'),
     compactSource: document.getElementById('compact-source-select'),
     compactRefresh: document.getElementById('compact-refresh-sources'),
@@ -120,6 +123,25 @@
     elements.compactStatusDot.className = `compact-status-dot${kind ? ` is-${kind}` : ''}`;
   }
 
+  function updateSaveDirectoryDisplay(status) {
+    const directory = status?.directory;
+    elements.saveDirectoryDisplay.textContent = !directory
+      ? 'Preguntar dónde guardar cada vez'
+      : status.available
+        ? directory
+        : `Carpeta no disponible: ${directory}`;
+    elements.saveDirectoryDisplay.classList.toggle('is-unavailable', Boolean(directory && !status.available));
+    elements.resetSaveDirectory.hidden = !directory;
+  }
+
+  async function loadSaveDirectory() {
+    try {
+      updateSaveDirectoryDisplay(await window.electronAPI.getSaveDirectory());
+    } catch (error) {
+      elements.saveDirectoryDisplay.textContent = `No se pudo leer la carpeta: ${error.message}`;
+    }
+  }
+
   function captureErrorMessage(error) {
     if (error?.name === 'NotAllowedError' || error?.name === 'PermissionDeniedError') {
       if (state.captureStep === 'microphone') {
@@ -176,6 +198,8 @@
     elements.countdown.disabled = controlsDisabled;
     elements.microphone.disabled = controlsDisabled;
     elements.systemAudio.disabled = controlsDisabled || !state.systemAudioAvailable;
+    elements.chooseSaveDirectory.disabled = controlsDisabled;
+    elements.resetSaveDirectory.disabled = controlsDisabled;
     elements.refresh.disabled = controlsDisabled;
     elements.start.disabled = !state.selectedSourceId || !state.captureConfigReady || phase !== 'idle';
     elements.stop.disabled = phase !== 'recording';
@@ -679,6 +703,20 @@
   }
 
   elements.refresh.addEventListener('click', loadSources);
+  elements.chooseSaveDirectory.addEventListener('click', async () => {
+    try {
+      updateSaveDirectoryDisplay(await window.electronAPI.chooseSaveDirectory());
+    } catch (error) {
+      elements.saveDirectoryDisplay.textContent = `No se pudo guardar la carpeta: ${error.message}`;
+    }
+  });
+  elements.resetSaveDirectory.addEventListener('click', async () => {
+    try {
+      updateSaveDirectoryDisplay(await window.electronAPI.resetSaveDirectory());
+    } catch (error) {
+      elements.saveDirectoryDisplay.textContent = `No se pudo restablecer: ${error.message}`;
+    }
+  });
   elements.compactToggle.addEventListener('click', () => {
     setCompactMode(elements.compactToggle.getAttribute('aria-pressed') !== 'true');
   });
@@ -781,5 +819,6 @@
   elements.compactSystemAudio.checked = elements.systemAudio.checked;
   initializeCompactMode();
   setPhase('idle');
+  loadSaveDirectory();
   loadSources();
 })();

@@ -91,12 +91,12 @@
         </div>
       </div>
       <div class="topbar-actions">
-        <button id="compact-toggle" class="quiet-button compact-toggle" type="button" title="Abrir mini barra · Ctrl+Mayús+M" aria-pressed="false">Mini barra</button>
         <div class="status-pill" id="status-pill" role="status" aria-live="polite">
           <span class="status-dot" id="status-dot" aria-hidden="true"></span>
           <span id="status-text">Listo para grabar</span>
         </div>
         <div class="window-controls" aria-label="Controles de ventana">
+          <button id="compact-toggle" class="quiet-button compact-toggle" type="button" title="Abrir mini barra · Ctrl+Mayús+M" aria-pressed="false">Mini barra</button>
           <button class="window-control-button" type="button" data-window-action="minimize" title="Minimizar" aria-label="Minimizar">−</button>
           <button class="window-control-button" type="button" data-window-action="toggle-maximize" title="Maximizar o restaurar" aria-label="Maximizar o restaurar">□</button>
           <button class="window-control-button close-window-button" type="button" data-window-action="close" title="Cerrar en el área de notificación" aria-label="Cerrar en el área de notificación">×</button>
@@ -148,6 +148,16 @@
           <option value="5">5 segundos</option>
           <option value="10">10 segundos</option>
         </select>
+
+        <p class="field-label save-directory-label">Carpeta de guardado predeterminada</p>
+        <div class="save-directory-control">
+          <p id="save-directory-display" class="save-directory-display" aria-live="polite">Preguntar dónde guardar cada vez</p>
+          <div class="save-directory-actions">
+            <button id="choose-save-directory" class="quiet-button" type="button">Elegir carpeta</button>
+            <button id="reset-save-directory" class="quiet-button" type="button" hidden>Restablecer</button>
+          </div>
+        </div>
+        <p class="field-hint">Al elegir una carpeta, las grabaciones se guardarán allí sin preguntar. Si el nombre ya existe, se agrega un número para conservar los archivos anteriores.</p>
 
         <div class="divider"></div>
 

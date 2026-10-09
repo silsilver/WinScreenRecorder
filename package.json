@@ -13,7 +13,7 @@
     "start": "npm run prepare:ffmpeg && npm run prepare:whisper && electron .",
     "prepare:ffmpeg": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/prepare-ffmpeg.ps1",
     "dist:win": "npm run prepare:ffmpeg && npm run prepare:whisper && electron-builder --win nsis --x64",
-    "check": "node --check main.js && node --check preload.js && node --check src/renderer.js && node --check src/permission-policy.js",
+    "check": "node --check main.js && node --check preload.js && node --check src/renderer.js && node --check src/permission-policy.js && node --check src/save-paths.js",
     "test": "node --test"
   },
   "devDependencies": {

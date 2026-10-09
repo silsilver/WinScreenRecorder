@@ -3,6 +3,9 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('electronAPI', {
   getSources: () => ipcRenderer.invoke('get-sources'),
   getDeveloperInfo: () => ipcRenderer.invoke('get-developer-info'),
+  getSaveDirectory: () => ipcRenderer.invoke('get-save-directory'),
+  chooseSaveDirectory: () => ipcRenderer.invoke('choose-save-directory'),
+  resetSaveDirectory: () => ipcRenderer.invoke('reset-save-directory'),
   setCompactMode: (compact) => ipcRenderer.invoke('set-compact-mode', compact),
   setCompactSettingsOpen: (expanded) => ipcRenderer.invoke('set-compact-settings-open', expanded),
   windowAction: (action) => ipcRenderer.invoke('window-action', action),

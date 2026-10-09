@@ -751,7 +751,8 @@
         updateRegionHighlight();
         if (elements.captureMode.value === 'video') await applyRegionToVideo(region);
       }
-      const seconds = Number.parseInt(elements.countdown.value, 10) || 0;
+      const isImage = elements.captureMode.value === 'image';
+      const seconds = isImage ? 0 : Number.parseInt(elements.countdown.value, 10) || 0;
       if (seconds > 0) {
         state.phase = 'countdown';
         let remaining = seconds;

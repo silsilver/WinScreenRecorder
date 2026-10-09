@@ -7,7 +7,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   chooseSaveDirectory: () => ipcRenderer.invoke('choose-save-directory'),
   resetSaveDirectory: () => ipcRenderer.invoke('reset-save-directory'),
   setCompactMode: (compact) => ipcRenderer.invoke('set-compact-mode', compact),
-  setCompactSettingsOpen: (expanded) => ipcRenderer.invoke('set-compact-settings-open', expanded),
+  setCompactSettingsOpen: (expanded, requestedHeight) => ipcRenderer.invoke('set-compact-settings-open', expanded, requestedHeight),
   windowAction: (action) => ipcRenderer.invoke('window-action', action),
   onCompactModeToggle: (callback) => {
     if (typeof callback !== 'function') return () => {};

@@ -9,11 +9,11 @@ Cuando WinScreen Recorder se abra automáticamente al iniciar sesión en Windows
 - Marcar los lanzamientos automáticos registrados por la opción **Iniciar con Windows** con un argumento de línea de comandos dedicado.
 - Detectar ese argumento en el proceso principal de Electron y minimizar la ventana al completar `ready-to-show`.
 - Mantener el comportamiento habitual para los lanzamientos manuales. El icono y las acciones existentes de la bandeja seguirán permitiendo restaurar la ventana.
-- Conservar la identidad del elemento de inicio existente para que la consulta y el cambio de la preferencia continúen refiriéndose a la misma aplicación.
+- Conservar la ruta del ejecutable del elemento de inicio. Migrar al nuevo argumento las configuraciones existentes que ya estén activadas, para que la consulta y el cambio de la preferencia sigan representando el estado correcto.
 
 ## Manejo de errores y compatibilidad
 
-La detección depende del argumento que Electron guarda con el elemento de inicio de Windows. La preferencia **Iniciar con Windows** debe consultar y registrar siempre el mismo conjunto de argumentos. No se cambiará la visibilidad al cerrar la ventana ni se alterarán otros modos de captura.
+La detección depende del argumento que Electron guarda con el elemento de inicio de Windows. La preferencia **Iniciar con Windows** debe consultar y registrar siempre el mismo conjunto de argumentos. Las configuraciones activas anteriores se migran manteniendo la ruta del ejecutable. No se cambiará la visibilidad al cerrar la ventana ni se alterarán otros modos de captura.
 
 ## Verificación
 

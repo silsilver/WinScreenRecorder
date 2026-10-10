@@ -16,6 +16,9 @@ const { mapPhysicalRectToDisplay } = require('./src/window-geometry');
 const execFileAsync = promisify(execFile);
 
 const rendererPath = path.join(__dirname, 'src', 'index.html');
+const WINDOWS_STARTUP_ARGUMENT = '--started-from-windows';
+const startedFromWindowsLogin = process.platform === 'win32'
+  && process.argv.includes(WINDOWS_STARTUP_ARGUMENT);
 let mainWindow;
 let regionOverlayWindow;
 let regionOverlayReadyPromise;
@@ -71,7 +74,26 @@ function registerHandler(channel, handler) {
 }
 
 function getLoginItemIdentity() {
-  return { path: process.execPath, args: app.isPackaged ? [] : [app.getAppPath()] };
+  const args = app.isPackaged ? [] : [app.getAppPath()];
+  if (process.platform === 'win32') args.push(WINDOWS_STARTUP_ARGUMENT);
+  return { path: process.execPath, args };
+}
+
+function migrateWindowsLoginItem() {
+  if (process.platform !== 'win32') return;
+
+  const legacyIdentity = {
+    path: process.execPath,
+    args: app.isPackaged ? [] : [app.getAppPath()]
+  };
+  const legacySettings = app.getLoginItemSettings(legacyIdentity);
+  if (!legacySettings.openAtLogin) return;
+
+  app.setLoginItemSettings({
+    ...getLoginItemIdentity(),
+    openAtLogin: true,
+    enabled: true
+  });
 }
 
 async function getDesktopSources() {
@@ -548,7 +570,10 @@ function makeWindow() {
       event.preventDefault();
     }
   });
-  mainWindow.once('ready-to-show', () => mainWindow.show());
+  mainWindow.once('ready-to-show', () => {
+    if (startedFromWindowsLogin) mainWindow.minimize();
+    else mainWindow.show();
+  });
   mainWindow.loadFile(rendererPath);
 
   mainWindow.on('close', (event) => {
@@ -1228,6 +1253,7 @@ function registerIpcHandlers() {
 }
 
 app.whenReady().then(() => {
+  migrateWindowsLoginItem();
   Menu.setApplicationMenu(null);
   createTray();
   makeWindow();

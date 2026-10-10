@@ -571,7 +571,7 @@ function makeWindow() {
     }
   });
   mainWindow.once('ready-to-show', () => {
-    if (startedFromWindowsLogin) mainWindow.minimize();
+    if (startedFromWindowsLogin) mainWindow.hide();
     else mainWindow.show();
   });
   mainWindow.loadFile(rendererPath);

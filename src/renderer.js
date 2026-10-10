@@ -5,21 +5,18 @@
     compactToggle: document.getElementById('compact-toggle'),
     captureMode: document.getElementById('capture-mode-select'),
     compactCaptureMode: document.getElementById('compact-capture-mode-select'),
+    selectRegion: document.getElementById('select-region'),
+    cancelRegion: document.getElementById('cancel-region'),
+    compactSelectRegion: document.getElementById('compact-select-region'),
+    compactCancelRegion: document.getElementById('compact-cancel-region'),
     captureModeBadge: document.getElementById('capture-mode-badge'),
     captureRegionBadge: document.getElementById('capture-region-badge'),
-    regionCapture: document.getElementById('region-capture-toggle'),
-    compactRegionCapture: document.getElementById('compact-region-toggle'),
-    regionCaptureRow: document.getElementById('region-capture-row'),
-    regionDialog: document.getElementById('region-dialog'),
-    regionPreviewFrame: document.getElementById('region-preview-frame'),
     regionPreviewVideo: document.getElementById('region-preview-video'),
-    regionSelectionBox: document.getElementById('region-selection-box'),
-    regionSizeLabel: document.getElementById('region-size-label'),
-    confirmRegionSelection: document.getElementById('confirm-region-selection'),
-    cancelRegionSelection: document.getElementById('cancel-region-selection'),
     saveDirectoryDisplay: document.getElementById('save-directory-display'),
     chooseSaveDirectory: document.getElementById('choose-save-directory'),
     resetSaveDirectory: document.getElementById('reset-save-directory'),
+    startWithWindows: document.getElementById('start-with-windows-toggle'),
+    startWithWindowsHint: document.getElementById('start-with-windows-hint'),
     compactToolbar: document.getElementById('compact-toolbar'),
     compactControlsRow: document.getElementById('compact-controls-row'),
     compactSource: document.getElementById('compact-source-select'),
@@ -101,16 +98,17 @@
     systemAudioAvailable: false,
     captureStep: 'display',
     developerInfo: null,
+    regionSelection: null,
+    regionSelectionPending: false,
+    regionSelectionQueued: false,
     regionRect: null,
     regionAnimationId: null,
     cropCanvas: null,
     cropVideo: null,
-    regionDragStart: null,
-    regionPendingRect: null,
-    resolveRegionSelection: null
+    highlightedSourceId: null
   };
 
-  const busyPhases = new Set(['loading', 'preparing', 'countdown', 'capturing-image', 'recording', 'finalizing', 'saving']);
+  const busyPhases = new Set(['loading', 'preparing', 'selecting-region', 'countdown', 'capturing-image', 'recording', 'finalizing', 'saving']);
   const compactPreferenceKey = 'winscreen-recorder-compact';
   const videoFormats = [
     ['mp4', 'MP4 · H.264'], ['mkv', 'MKV · H.264'], ['webm', 'WebM · VP9 / VP8'], ['gif', 'GIF animado']
@@ -164,27 +162,30 @@
       : '<span class="record-icon" aria-hidden="true"></span> Grabar';
     elements.compactSize.closest('.compact-setting-field').firstChild.textContent = isImage ? 'Tamaño de imagen' : 'Tamaño';
     elements.videoSize.previousElementSibling.textContent = isImage ? 'Tamaño de imagen' : 'Tamaño del video';
-    elements.regionCapture.checked = elements.compactRegionCapture.checked;
-    syncRegionControlAvailability();
   }
 
   function syncRegionControlAvailability() {
     const selected = state.sources.find((source) => source.id === state.selectedSourceId);
     const isScreen = Boolean(selected?.id.startsWith('screen:'));
-    if (!isScreen) {
-      elements.regionCapture.checked = false;
-      elements.compactRegionCapture.checked = false;
-      if (state.regionRect) {
-        state.regionRect = null;
-        elements.captureRegionBadge.hidden = true;
-        updateRegionHighlight();
-      }
+    const disabled = state.phase !== 'idle' && state.phase !== 'capturing-image';
+    for (const button of [elements.selectRegion, elements.compactSelectRegion]) {
+      button.disabled = disabled;
+      button.setAttribute('aria-pressed', String(Boolean(state.regionSelection)));
+      button.classList.toggle('is-active', Boolean(state.regionSelection));
     }
-    const disabled = !isScreen || state.phase !== 'idle';
-    elements.regionCapture.disabled = disabled;
-    elements.compactRegionCapture.disabled = disabled;
-    elements.regionCaptureRow.classList.toggle('is-disabled', disabled);
-    elements.regionCaptureRow.title = isScreen ? '' : 'Selecciona una pantalla para capturar una porción.';
+    elements.selectRegion.textContent = state.regionSelection ? '▧ Cambiar porción' : '▧ Capturar una porción';
+    const hasActiveSource = Boolean(state.selectedSourceId || state.regionSelection);
+    elements.cancelRegion.hidden = !hasActiveSource;
+    elements.compactCancelRegion.hidden = !hasActiveSource;
+    elements.cancelRegion.title = state.regionSelection
+      ? 'Cancelar la pantalla y la porción seleccionadas.'
+      : 'Cancelar la pantalla o ventana seleccionada.';
+    elements.compactCancelRegion.title = elements.cancelRegion.title;
+    elements.selectRegion.title = isScreen
+      ? 'Seleccionar directamente en el escritorio; sirve para video e imagen.'
+      : 'Al continuar se usará una pantalla disponible para seleccionar la porción.';
+    elements.compactSelectRegion.title = state.regionSelection ? 'Cambiar la porción seleccionada' : 'Seleccionar una porción del escritorio';
+    elements.compactSelectRegion.setAttribute('aria-label', state.regionSelection ? 'Cambiar porción para video o imagen' : 'Seleccionar una porción para video o imagen');
   }
 
   async function setCompactMode(enabled, persist = true) {
@@ -236,6 +237,20 @@
       updateSaveDirectoryDisplay(await window.electronAPI.getSaveDirectory());
     } catch (error) {
       elements.saveDirectoryDisplay.textContent = `No se pudo leer la carpeta: ${error.message}`;
+    }
+  }
+
+  async function loadStartWithWindows() {
+    elements.startWithWindows.disabled = true;
+    try {
+      const result = await window.electronAPI.getStartWithWindows();
+      elements.startWithWindows.checked = result.enabled;
+      elements.startWithWindowsHint.textContent = result.enabled
+        ? 'WinScreen Recorder se abrirá al iniciar sesión en Windows.'
+        : 'Puedes cambiar esta opción cuando quieras.';
+      elements.startWithWindows.disabled = false;
+    } catch (error) {
+      elements.startWithWindowsHint.textContent = `No se pudo consultar el inicio de Windows: ${error.message}`;
     }
   }
 
@@ -329,35 +344,69 @@
     elements.compactDiscard.disabled = phase !== 'ready';
     if (controlsDisabled && elements.compactSettings.open) elements.compactSettings.open = false;
     elements.save.textContent = phase === 'saving' ? 'Procesando…' : `Guardar ${elements.format.value.toUpperCase()}`;
-    const captureAreaDisabled = controlsDisabled;
+    const captureAreaDisabled = controlsDisabled && phase !== 'capturing-image';
     elements.captureArea.classList.toggle('is-locked', captureAreaDisabled);
     elements.captureArea.setAttribute('aria-disabled', String(captureAreaDisabled));
 
     for (const card of elements.sourceGrid.querySelectorAll('.source-card')) {
       card.disabled = controlsDisabled;
     }
+    syncSelectedSourceHighlight();
+  }
+
+  function syncSelectedSourceHighlight() {
+    const selected = state.sources.find((source) => source.id === state.selectedSourceId);
+    const shouldShow = ['idle', 'recording', 'ready'].includes(state.phase) && state.captureConfigReady
+      && (selected?.id.startsWith('screen:') || selected?.id.startsWith('window:'));
+    if (!shouldShow) {
+      if (state.highlightedSourceId) {
+        state.highlightedSourceId = null;
+        window.electronAPI.hideRegionHighlight().catch(() => {});
+      }
+      return;
+    }
+    const region = selected.id.startsWith('screen:') ? state.regionSelection : null;
+    const highlightKey = region
+      ? `${selected.id}:${region.x}:${region.y}:${region.width}:${region.height}`
+      : selected.id;
+    if (state.highlightedSourceId === highlightKey) return;
+    state.highlightedSourceId = highlightKey;
+    const highlightPromise = region
+      ? window.electronAPI.showSelectedRegionHighlight(region, selected.id)
+      : window.electronAPI.showSelectedSourceHighlight(selected.id);
+    highlightPromise.catch((error) => {
+      if (state.highlightedSourceId !== highlightKey) return;
+      state.highlightedSourceId = null;
+      elements.selectionNote.textContent = `No se pudo resaltar la fuente seleccionada: ${error.message}`;
+    });
   }
 
   function renderSources() {
     elements.sourceGrid.replaceChildren();
     elements.compactSource.replaceChildren();
+    const placeholder = document.createElement('option');
+    placeholder.value = '';
+    placeholder.textContent = state.sources.length ? 'Selecciona una fuente' : 'No hay fuentes disponibles';
+    elements.compactSource.append(placeholder);
     if (state.sources.length === 0) {
       const emptyState = document.createElement('div');
       emptyState.className = 'empty-state';
       emptyState.textContent = 'No se encontraron pantallas ni ventanas.';
       elements.sourceGrid.append(emptyState);
       elements.selectionNote.textContent = 'No hay fuentes disponibles';
-      const option = document.createElement('option');
-      option.value = '';
-      option.textContent = 'No hay fuentes disponibles';
-      elements.compactSource.append(option);
       elements.start.disabled = true;
       return;
+    }
+
+    const showRegionCard = state.regionSelectionPending || Boolean(state.regionSelection);
+    if (showRegionCard) {
+      renderRegionSourceCard();
     }
 
     for (const source of state.sources) {
       const card = document.createElement('button');
       card.type = 'button';
+      card.dataset.sourceId = source.id;
       card.className = `source-card${source.id === state.selectedSourceId ? ' is-selected' : ''}`;
       card.setAttribute('aria-pressed', source.id === state.selectedSourceId ? 'true' : 'false');
 
@@ -380,7 +429,7 @@
       name.textContent = source.name || 'Fuente sin nombre';
       card.append(preview, name);
       card.addEventListener('click', () => selectSource(source.id));
-      elements.sourceGrid.append(card);
+      if (!showRegionCard) elements.sourceGrid.append(card);
 
       const option = document.createElement('option');
       option.value = source.id;
@@ -394,6 +443,71 @@
     elements.selectionNote.textContent = selected ? `Capturando: ${selected.name}` : 'Selecciona una fuente para continuar';
     elements.start.disabled = !state.selectedSourceId || !state.captureConfigReady || state.phase !== 'idle';
     updateRegionHighlight();
+    syncRegionControlAvailability();
+  }
+
+  function renderRegionSourceCard() {
+    const source = state.sources.find((item) => item.id === state.selectedSourceId);
+    if (!source) return;
+
+    const card = document.createElement('div');
+    card.className = `source-card region-source-card${state.regionSelection && !state.regionSelectionPending ? ' is-selected' : ''}`;
+    card.setAttribute('role', 'group');
+    card.setAttribute('aria-label', state.regionSelectionPending
+      ? 'Capturar una posición, selección en curso'
+      : 'Capturar una posición, porción activa');
+
+    const preview = document.createElement('span');
+    preview.className = 'source-preview region-source-preview';
+    if (state.regionSelection && !state.regionSelectionPending && source.thumbnail) {
+      const image = new Image();
+      image.alt = '';
+      image.draggable = false;
+      image.className = 'region-source-image';
+      image.addEventListener('load', () => {
+        if (!preview.isConnected) return;
+        preview.style.aspectRatio = `${image.naturalWidth} / ${image.naturalHeight}`;
+        image.classList.add('is-ready');
+        const region = state.regionSelection;
+        if (!region) return;
+
+        const selectionFrame = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        selectionFrame.classList.add('region-source-frame');
+        selectionFrame.setAttribute('viewBox', `0 0 ${image.naturalWidth} ${image.naturalHeight}`);
+        selectionFrame.setAttribute('preserveAspectRatio', 'none');
+        selectionFrame.setAttribute('aria-hidden', 'true');
+        const selectionRect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+        selectionRect.setAttribute('x', String(region.x * image.naturalWidth));
+        selectionRect.setAttribute('y', String(region.y * image.naturalHeight));
+        selectionRect.setAttribute('width', String(region.width * image.naturalWidth));
+        selectionRect.setAttribute('height', String(region.height * image.naturalHeight));
+        selectionRect.setAttribute('fill', 'rgba(74, 222, 164, .14)');
+        selectionRect.setAttribute('stroke', '#4adea4');
+        selectionRect.setAttribute('stroke-width', '4');
+        selectionRect.setAttribute('vector-effect', 'non-scaling-stroke');
+        selectionFrame.append(selectionRect);
+        preview.append(selectionFrame);
+      }, { once: true });
+      preview.append(image);
+      image.src = source.thumbnail;
+    } else {
+      preview.classList.add('is-pending');
+      const marker = document.createElement('span');
+      marker.className = 'region-source-marker';
+      marker.textContent = '▧';
+      preview.append(marker);
+    }
+
+    const type = document.createElement('span');
+    type.className = 'source-type';
+    type.textContent = state.regionSelectionPending ? 'SELECCIÓN' : 'PORCIÓN ACTIVA';
+    preview.append(type);
+
+    const name = document.createElement('span');
+    name.className = 'source-name';
+    name.textContent = 'Capturar una posición';
+    card.append(preview, name);
+    elements.sourceGrid.append(card);
   }
 
   async function syncCaptureOptions() {
@@ -440,11 +554,23 @@
   }
 
   async function selectSource(sourceId) {
+    if (!sourceId) {
+      await cancelCaptureSelection();
+      return;
+    }
+    if (sourceId !== state.selectedSourceId) {
+      state.regionSelection = null;
+      state.regionRect = null;
+      elements.captureRegionBadge.hidden = true;
+    }
     state.selectedSourceId = sourceId;
     state.captureConfigReady = false;
+    state.highlightedSourceId = null;
+    await window.electronAPI.hideRegionHighlight().catch(() => {});
     renderSources();
     await syncCaptureOptions();
     renderSources();
+    syncSelectedSourceHighlight();
   }
 
   async function loadSources() {
@@ -463,10 +589,21 @@
     try {
       state.sources = await window.electronAPI.getSources();
       if (!state.sources.some((source) => source.id === state.selectedSourceId)) {
-        state.selectedSourceId = state.sources[0]?.id ?? null;
+        state.regionSelection = null;
+        state.regionRect = null;
+        elements.captureRegionBadge.hidden = true;
+        state.selectedSourceId = null;
       }
-      await syncCaptureOptions();
-      setStatus(state.sources.length ? 'Listo para grabar' : 'No hay fuentes disponibles');
+      if (state.selectedSourceId) await syncCaptureOptions();
+      else {
+        state.captureConfigReady = false;
+        const capabilities = await window.electronAPI.clearCapture();
+        state.systemAudioAvailable = capabilities.systemAudioAvailable;
+        setCaptureMode(elements.captureMode.value);
+      }
+      setStatus(!state.sources.length
+        ? 'No hay fuentes disponibles'
+        : state.selectedSourceId ? 'Listo para grabar' : 'Selecciona una pantalla o ventana');
     } catch (error) {
       state.sources = [];
       state.selectedSourceId = null;
@@ -559,89 +696,42 @@
     });
   }
 
-  function setRegionPreviewAspect() {
+  async function prepareCapturePreview() {
     const video = elements.regionPreviewVideo;
-    if (!video.videoWidth || !video.videoHeight) return;
-    elements.regionPreviewFrame.style.aspectRatio = `${video.videoWidth} / ${video.videoHeight}`;
-    const scale = Math.min(
-      (elements.regionDialog.clientWidth - 44) / video.videoWidth,
-      window.innerHeight * .65 / video.videoHeight
-    );
-    elements.regionPreviewFrame.style.width = `${Math.floor(video.videoWidth * scale)}px`;
-    elements.regionPreviewFrame.style.height = `${Math.floor(video.videoHeight * scale)}px`;
+    const videoTrack = state.displayStream?.getVideoTracks()[0];
+    if (!videoTrack) throw new Error('No se encontró la pantalla para aplicar la porción seleccionada.');
+    if (video.srcObject?.getVideoTracks()[0] !== videoTrack) video.srcObject = new MediaStream([videoTrack]);
+    if (video.paused) await video.play();
+    await waitForVideoReady(video);
+    return video;
+  }
+
+  function getRegionPixels(region, width, height) {
+    const left = Math.max(0, Math.min(width - 1, Math.floor(region.x * width)));
+    const top = Math.max(0, Math.min(height - 1, Math.floor(region.y * height)));
+    const right = Math.max(left + 1, Math.min(width, Math.ceil((region.x + region.width) * width)));
+    const bottom = Math.max(top + 1, Math.min(height, Math.ceil((region.y + region.height) * height)));
+    return { x: left, y: top, width: right - left, height: bottom - top };
   }
 
   function updateRegionHighlight() {
     for (const overlay of elements.sourceGrid.querySelectorAll('.capture-region-overlay')) overlay.remove();
-    const selectedCard = [...elements.sourceGrid.querySelectorAll('.source-card')]
-      .find((card) => card.getAttribute('aria-pressed') === 'true');
+    const selectedCard = [...elements.sourceGrid.querySelectorAll('.source-card[data-source-id]')]
+      .find((card) => card.dataset.sourceId === state.selectedSourceId);
     const preview = selectedCard?.querySelector('.source-preview');
-    if (!preview || !state.regionRect || !elements.regionPreviewVideo.videoWidth || !elements.regionPreviewVideo.videoHeight) return;
+    if (!preview || !state.regionSelection) return;
     const overlay = document.createElement('span');
     overlay.className = 'capture-region-overlay';
     overlay.setAttribute('aria-label', 'Porción seleccionada');
-    overlay.style.left = `${100 * state.regionRect.x / elements.regionPreviewVideo.videoWidth}%`;
-    overlay.style.top = `${100 * state.regionRect.y / elements.regionPreviewVideo.videoHeight}%`;
-    overlay.style.width = `${100 * state.regionRect.width / elements.regionPreviewVideo.videoWidth}%`;
-    overlay.style.height = `${100 * state.regionRect.height / elements.regionPreviewVideo.videoHeight}%`;
+    overlay.style.left = `${100 * state.regionSelection.x}%`;
+    overlay.style.top = `${100 * state.regionSelection.y}%`;
+    overlay.style.width = `${100 * state.regionSelection.width}%`;
+    overlay.style.height = `${100 * state.regionSelection.height}%`;
     preview.append(overlay);
   }
 
-  function updateRegionSelection(event) {
-    if (!state.regionDragStart) return;
-    const bounds = elements.regionPreviewVideo.getBoundingClientRect();
-    const currentX = Math.max(0, Math.min(bounds.width, event.clientX - bounds.left));
-    const currentY = Math.max(0, Math.min(bounds.height, event.clientY - bounds.top));
-    const left = Math.min(state.regionDragStart.x, currentX);
-    const top = Math.min(state.regionDragStart.y, currentY);
-    const width = Math.abs(currentX - state.regionDragStart.x);
-    const height = Math.abs(currentY - state.regionDragStart.y);
-    elements.regionSelectionBox.hidden = false;
-    elements.regionSelectionBox.style.left = `${left}px`;
-    elements.regionSelectionBox.style.top = `${top}px`;
-    elements.regionSelectionBox.style.width = `${width}px`;
-    elements.regionSelectionBox.style.height = `${height}px`;
-    const scaleX = elements.regionPreviewVideo.videoWidth / bounds.width;
-    const scaleY = elements.regionPreviewVideo.videoHeight / bounds.height;
-    state.regionPendingRect = {
-      x: Math.floor(left * scaleX),
-      y: Math.floor(top * scaleY),
-      width: Math.floor(width * scaleX),
-      height: Math.floor(height * scaleY)
-    };
-    const valid = state.regionPendingRect.width >= 16 && state.regionPendingRect.height >= 16;
-    elements.confirmRegionSelection.disabled = !valid;
-    elements.regionSizeLabel.textContent = valid
-      ? `${state.regionPendingRect.width} × ${state.regionPendingRect.height} píxeles`
-      : 'Marca un área de al menos 16 × 16 píxeles';
-  }
-
-  function finishRegionSelection(rectangle) {
-    if (!state.resolveRegionSelection) return;
-    const resolve = state.resolveRegionSelection;
-    state.resolveRegionSelection = null;
-    if (elements.regionDialog.open) elements.regionDialog.close();
-    resolve(rectangle);
-  }
-
-  async function chooseCaptureRegion() {
-    const videoTrack = state.displayStream?.getVideoTracks()[0];
-    if (!videoTrack) throw new Error('No se encontró la pantalla para seleccionar una porción.');
-    elements.regionPreviewVideo.srcObject = new MediaStream([videoTrack]);
-    elements.regionDialog.showModal();
-    await elements.regionPreviewVideo.play();
-    await waitForVideoReady(elements.regionPreviewVideo);
-    setRegionPreviewAspect();
-    state.regionDragStart = null;
-    state.regionPendingRect = null;
-    elements.regionSelectionBox.hidden = true;
-    elements.confirmRegionSelection.disabled = true;
-    elements.regionSizeLabel.textContent = 'Marca un área';
-    return new Promise((resolve) => { state.resolveRegionSelection = resolve; });
-  }
-
   async function applyRegionToVideo(rectangle) {
-    const video = elements.regionPreviewVideo;
+    const video = await prepareCapturePreview();
     const canvas = document.createElement('canvas');
     canvas.width = rectangle.width;
     canvas.height = rectangle.height;
@@ -675,10 +765,7 @@
   }
 
   async function captureAndSaveImage() {
-    const video = elements.regionPreviewVideo;
-    if (!video.srcObject) video.srcObject = new MediaStream([state.displayStream.getVideoTracks()[0]]);
-    if (video.paused) await video.play();
-    await waitForVideoReady(video);
+    const video = await prepareCapturePreview();
     await new Promise((resolve) => window.setTimeout(resolve, 80));
     const region = state.regionRect;
     const sourceX = region?.x ?? 0;
@@ -701,9 +788,85 @@
     setStatus('Imagen guardada', 'ready');
   }
 
+  async function selectCaptureRegion() {
+    if (state.phase === 'capturing-image') {
+      state.regionSelectionQueued = true;
+      setStatus('La porción se seleccionará al terminar la imagen', 'busy');
+      return;
+    }
+    if (state.phase !== 'idle') return;
+    const screenSource = state.sources.find((source) => source.id.startsWith('screen:'));
+    if (!screenSource) {
+      elements.sourceError.textContent = 'No hay una pantalla disponible para seleccionar una porción. Actualiza las fuentes e inténtalo de nuevo.';
+      elements.sourceError.hidden = false;
+      setStatus('No hay pantallas disponibles');
+      return;
+    }
+    elements.sourceError.hidden = true;
+    if (screenSource.id !== state.selectedSourceId || !state.captureConfigReady) {
+      await selectSource(screenSource.id);
+      if (!state.captureConfigReady) return;
+    }
+    state.regionSelectionPending = true;
+    state.phase = 'selecting-region';
+    setPhase('selecting-region');
+    renderSources();
+    setStatus('Marca una porción en el escritorio', 'busy');
+    elements.sourceError.hidden = true;
+    try {
+      const region = await window.electronAPI.selectCaptureRegion();
+      if (!region) {
+        state.regionSelectionPending = false;
+        renderSources();
+        setStatus('Selección cancelada');
+        return;
+      }
+      state.regionSelection = region;
+      state.regionSelectionPending = false;
+      state.regionRect = null;
+      elements.captureRegionBadge.textContent = 'PORCIÓN SELECCIONADA';
+      elements.captureRegionBadge.hidden = false;
+      renderSources();
+      setStatus('Porción lista para video o imagen', 'ready');
+    } catch (error) {
+      state.regionSelectionPending = false;
+      renderSources();
+      elements.sourceError.textContent = `No se pudo seleccionar la porción: ${error.message}`;
+      elements.sourceError.hidden = false;
+      setStatus('No se pudo seleccionar la porción');
+    } finally {
+      state.regionSelectionPending = false;
+      state.phase = 'idle';
+      setPhase('idle');
+      renderSources();
+    }
+  }
+
+  async function clearCaptureSelection() {
+    if (!state.regionSelection && !state.selectedSourceId) return;
+    state.regionSelection = null;
+    state.regionRect = null;
+    state.selectedSourceId = null;
+    state.captureConfigReady = false;
+    state.captureConfigVersion += 1;
+    state.highlightedSourceId = null;
+    elements.captureRegionBadge.hidden = true;
+    renderSources();
+    try {
+      await window.electronAPI.clearCapture();
+    } catch (error) {
+      elements.sourceError.textContent = `No se pudo quitar el resaltado de la fuente: ${error.message}`;
+      elements.sourceError.hidden = false;
+    }
+  }
+
+  async function cancelCaptureSelection() {
+    if ((!state.selectedSourceId && !state.regionSelection) || state.phase !== 'idle') return;
+    await clearCaptureSelection();
+    setStatus('Selección cancelada', 'ready');
+  }
+
   function stopTracks() {
-    if (state.resolveRegionSelection) finishRegionSelection(null);
-    else if (elements.regionDialog.open) elements.regionDialog.close();
     if (state.regionAnimationId) cancelAnimationFrame(state.regionAnimationId);
     state.regionAnimationId = null;
     state.cropCanvas = null;
@@ -736,21 +899,13 @@
       await capturePromise;
       state.regionRect = null;
       elements.captureRegionBadge.hidden = true;
-      if (elements.regionCapture.checked) {
-        const region = await chooseCaptureRegion();
-        if (!region) {
-          stopTracks();
-          elements.captureRegionBadge.hidden = true;
-          state.phase = 'idle';
-          setPhase('idle');
-          setStatus('Selección de porción cancelada');
-          return;
-        }
-        state.regionRect = region;
-        elements.captureRegionBadge.textContent = `PORCIÓN ${region.width} × ${region.height}`;
+      if (state.regionSelection) {
+        const preview = await prepareCapturePreview();
+        state.regionRect = getRegionPixels(state.regionSelection, preview.videoWidth, preview.videoHeight);
+        elements.captureRegionBadge.textContent = `PORCIÓN ${state.regionRect.width} × ${state.regionRect.height}`;
         elements.captureRegionBadge.hidden = false;
         updateRegionHighlight();
-        if (elements.captureMode.value === 'video') await applyRegionToVideo(region);
+        if (elements.captureMode.value === 'video') await applyRegionToVideo(state.regionRect);
       }
       const isImage = elements.captureMode.value === 'image';
       const seconds = isImage ? 0 : Number.parseInt(elements.countdown.value, 10) || 0;
@@ -786,18 +941,25 @@
   async function captureImageWorkflow() {
     state.phase = 'capturing-image';
     setPhase('capturing-image');
+    let imageSaved = false;
     try {
       setStatus('Generando imagen…', 'busy');
       await captureAndSaveImage();
+      imageSaved = true;
     } catch (error) {
       await handleCaptureError(error);
     } finally {
       stopTracks();
       state.regionRect = null;
+      if (imageSaved) await clearCaptureSelection();
       elements.captureRegionBadge.hidden = true;
       updateRegionHighlight();
       state.phase = 'idle';
       setPhase('idle');
+      if (state.regionSelectionQueued) {
+        state.regionSelectionQueued = false;
+        window.setTimeout(() => { void selectCaptureRegion(); }, 0);
+      }
     }
   }
 
@@ -909,6 +1071,7 @@
 
     try {
       await window.electronAPI.completeRecording(state.recordingId, state.hasAudio);
+      await clearCaptureSelection();
       state.phase = 'ready';
       elements.saveTitle.textContent = 'Tu captura está lista';
       elements.saveDescription.textContent = 'Elige dónde guardarla. La transcripción con audio se generará automáticamente.';
@@ -990,7 +1153,8 @@
     state.countdownTimer = null;
     stopTracks();
     state.regionRect = null;
-    elements.captureRegionBadge.hidden = true;
+    elements.captureRegionBadge.hidden = !state.regionSelection;
+    if (state.regionSelection) elements.captureRegionBadge.textContent = 'PORCIÓN SELECCIONADA';
     updateRegionHighlight();
     state.phase = 'idle';
     setPhase('idle');
@@ -1011,7 +1175,8 @@
     }
     state.recordingId = null;
     state.regionRect = null;
-    elements.captureRegionBadge.hidden = true;
+    elements.captureRegionBadge.hidden = !state.regionSelection;
+    if (state.regionSelection) elements.captureRegionBadge.textContent = 'PORCIÓN SELECCIONADA';
     updateRegionHighlight();
     state.phase = 'idle';
     setPhase('idle');
@@ -1032,34 +1197,10 @@
     setPhase(state.phase);
     syncCaptureOptions();
   });
-  elements.regionCapture.addEventListener('change', () => {
-    elements.compactRegionCapture.checked = elements.regionCapture.checked;
-  });
-  elements.compactRegionCapture.addEventListener('change', () => {
-    elements.regionCapture.checked = elements.compactRegionCapture.checked;
-  });
-  elements.regionPreviewVideo.addEventListener('loadedmetadata', setRegionPreviewAspect);
-  elements.regionPreviewVideo.addEventListener('pointerdown', (event) => {
-    if (!elements.regionDialog.open) return;
-    const bounds = elements.regionPreviewVideo.getBoundingClientRect();
-    state.regionDragStart = {
-      x: Math.max(0, Math.min(bounds.width, event.clientX - bounds.left)),
-      y: Math.max(0, Math.min(bounds.height, event.clientY - bounds.top))
-    };
-    elements.regionPreviewVideo.setPointerCapture(event.pointerId);
-    updateRegionSelection(event);
-  });
-  elements.regionPreviewVideo.addEventListener('pointermove', updateRegionSelection);
-  elements.regionPreviewVideo.addEventListener('pointerup', (event) => {
-    updateRegionSelection(event);
-    state.regionDragStart = null;
-  });
-  elements.confirmRegionSelection.addEventListener('click', () => finishRegionSelection(state.regionPendingRect));
-  elements.cancelRegionSelection.addEventListener('click', () => finishRegionSelection(null));
-  elements.regionDialog.addEventListener('cancel', (event) => {
-    event.preventDefault();
-    finishRegionSelection(null);
-  });
+  elements.selectRegion.addEventListener('click', selectCaptureRegion);
+  elements.cancelRegion.addEventListener('click', cancelCaptureSelection);
+  elements.compactSelectRegion.addEventListener('click', selectCaptureRegion);
+  elements.compactCancelRegion.addEventListener('click', cancelCaptureSelection);
   elements.chooseSaveDirectory.addEventListener('click', async () => {
     try {
       updateSaveDirectoryDisplay(await window.electronAPI.chooseSaveDirectory());
@@ -1072,6 +1213,25 @@
       updateSaveDirectoryDisplay(await window.electronAPI.resetSaveDirectory());
     } catch (error) {
       elements.saveDirectoryDisplay.textContent = `No se pudo restablecer: ${error.message}`;
+    }
+  });
+  elements.startWithWindows.addEventListener('change', async () => {
+    const requested = elements.startWithWindows.checked;
+    elements.startWithWindows.disabled = true;
+    elements.startWithWindowsHint.textContent = requested
+      ? 'Activando inicio con Windows…'
+      : 'Desactivando inicio con Windows…';
+    try {
+      const result = await window.electronAPI.setStartWithWindows(requested);
+      elements.startWithWindows.checked = result.enabled;
+      elements.startWithWindowsHint.textContent = result.enabled
+        ? 'WinScreen Recorder se abrirá al iniciar sesión en Windows.'
+        : 'WinScreen Recorder ya no se abrirá automáticamente.';
+    } catch (error) {
+      elements.startWithWindows.checked = !requested;
+      elements.startWithWindowsHint.textContent = `No se pudo cambiar el inicio automático: ${error.message}`;
+    } finally {
+      elements.startWithWindows.disabled = false;
     }
   });
   elements.compactToggle.addEventListener('click', () => {
@@ -1188,5 +1348,6 @@
   initializeCompactMode();
   setPhase('idle');
   loadSaveDirectory();
+  loadStartWithWindows();
   loadSources();
 })();

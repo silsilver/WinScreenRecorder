@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="stylesheet" href="region-overlay.css">
+  <script src="region-overlay.js" defer></script>
+</head>
+<body>
+  <div class="region-highlight" aria-hidden="true"></div>
+  <div id="selection-shade" class="selection-shade" hidden></div>
+  <div id="selection-box" class="selection-box" hidden></div>
+  <div id="selection-hint" class="selection-hint" hidden>
+    <span>Arrastra para marcar la porción</span>
+    <button id="cancel-selection" type="button">Cancelar · Esc</button>
+  </div>
+</body>
+</html>

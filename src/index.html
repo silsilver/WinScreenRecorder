@@ -12,11 +12,11 @@
 <body>
   <main class="app-shell">
     <section id="compact-toolbar" class="compact-toolbar" aria-label="Controles compactos" hidden>
-      <div class="compact-titlebar">
-        <div class="compact-drag-handle" title="Arrastra desde aquí para mover la mini barra">
+      <div class="compact-titlebar topbar">
+        <div class="window-drag-handle compact-drag-handle" title="Arrastra desde aquí para mover la mini barra">
           <span aria-hidden="true">⠿</span><span>Mover mini barra</span>
         </div>
-        <div class="compact-window-actions">
+        <div class="compact-window-actions topbar-actions">
           <button id="compact-expand" class="quiet-button compact-expand" type="button" title="Volver a la ventana completa">Vista completa</button>
           <div class="window-controls compact-window-controls" aria-label="Controles de ventana">
             <button class="window-control-button" type="button" data-window-action="minimize" title="Minimizar" aria-label="Minimizar">−</button>
@@ -44,6 +44,8 @@
             <option value="image">Imagen</option>
           </select>
         </label>
+        <button id="compact-select-region" class="compact-icon-button region-select-button" type="button" title="Seleccionar una porción del escritorio" aria-label="Seleccionar una porción para video o imagen" aria-pressed="false">▧</button>
+        <button id="compact-cancel-region" class="compact-icon-button cancel-region-button" type="button" title="Cancelar la fuente seleccionada" aria-label="Cancelar pantalla o ventana seleccionada" hidden>×</button>
         <button id="compact-refresh-sources" class="compact-icon-button" type="button" title="Actualizar pantallas y ventanas" aria-label="Actualizar fuentes">↻</button>
 
         <div class="compact-status" role="status" aria-live="polite">
@@ -81,9 +83,6 @@
           <label class="compact-audio-setting" for="compact-system-audio-toggle">
             <input id="compact-system-audio-toggle" type="checkbox" checked> Audio del sistema
           </label>
-          <label class="compact-audio-setting" for="compact-region-toggle">
-            <input id="compact-region-toggle" type="checkbox"> Capturar una porción
-          </label>
             <p class="compact-local-note">Procesamiento local. Los cambios se reflejan en la vista completa.</p>
           </div>
         </details>
@@ -108,10 +107,6 @@
       </div>
       <div class="window-drag-handle" title="Arrastra desde aquí para mover la ventana"><span aria-hidden="true">⠿</span> Mover ventana</div>
       <div class="topbar-actions">
-        <div class="status-pill" id="status-pill" role="status" aria-live="polite">
-          <span class="status-dot" id="status-dot" aria-hidden="true"></span>
-          <span id="status-text">Listo para grabar</span>
-        </div>
         <div class="window-controls" aria-label="Controles de ventana">
           <button id="compact-toggle" class="quiet-button compact-toggle" type="button" title="Abrir mini barra · Ctrl+Mayús+M" aria-pressed="false">Mini barra</button>
           <button class="window-control-button" type="button" data-window-action="minimize" title="Minimizar" aria-label="Minimizar">−</button>
@@ -126,6 +121,10 @@
         <p class="eyebrow">UNA CAPTURA, A TU MANERA</p>
         <h2>Prepara tu grabación</h2>
         <p class="intro-copy">Elige una pantalla o ventana y ajusta el audio antes de empezar.</p>
+      </div>
+      <div class="status-pill intro-status-pill" id="status-pill" role="status" aria-live="polite">
+        <span class="status-dot" id="status-dot" aria-hidden="true"></span>
+        <span id="status-text">Listo para grabar</span>
       </div>
       <div class="timer-card" aria-label="Duración de la grabación">
         <span class="timer-label">DURACIÓN</span>
@@ -172,6 +171,13 @@
         </div>
         <p class="field-hint">Al elegir una carpeta, las grabaciones se guardarán allí sin preguntar. Si el nombre ya existe, se agrega un número para conservar los archivos anteriores.</p>
 
+        <label class="toggle-row" for="start-with-windows-toggle">
+          <span class="toggle-copy"><span class="toggle-title">Iniciar con Windows</span><span class="toggle-detail">Abrir WinScreen Recorder al iniciar sesión</span></span>
+          <input id="start-with-windows-toggle" class="toggle-input" type="checkbox" aria-describedby="start-with-windows-hint">
+          <span class="toggle-switch" aria-hidden="true"></span>
+        </label>
+        <p id="start-with-windows-hint" class="field-hint" aria-live="polite">Puedes cambiar esta opción cuando quieras.</p>
+
         <div class="divider"></div>
 
         <label class="toggle-row" for="microphone-toggle">
@@ -186,12 +192,6 @@
           <span class="toggle-switch" aria-hidden="true"></span>
         </label>
         <p class="field-hint system-audio-hint" id="system-audio-hint">Disponible en Windows.</p>
-
-        <label class="toggle-row" for="region-capture-toggle" id="region-capture-row">
-          <span class="toggle-copy"><span class="toggle-title">Capturar una porción</span><span class="toggle-detail">Selecciona un área dentro de una pantalla</span></span>
-          <input id="region-capture-toggle" class="toggle-input" type="checkbox">
-          <span class="toggle-switch" aria-hidden="true"></span>
-        </label>
 
         <div class="settings-footer">
           <span class="shield-icon" aria-hidden="true">✓</span>
@@ -214,6 +214,8 @@
               <option value="video">Video</option>
               <option value="image">Imagen</option>
             </select>
+            <button id="select-region" class="quiet-button region-select-button" type="button" aria-pressed="false">▧ Capturar una porción</button>
+            <button id="cancel-region" class="quiet-button region-cancel-inline-button" type="button" aria-label="Cancelar pantalla o ventana seleccionada" hidden>Cancelar</button>
           </div>
           <p class="panel-copy">Selecciona lo que quieres mostrar en tu grabación.</p>
 
@@ -276,19 +278,6 @@
       <div><dt>Aplicación</dt><dd>Grabación local de pantalla y ventanas para Windows.</dd></div>
     </dl>
   </dialog>
-  <dialog id="region-dialog" class="region-dialog" aria-labelledby="region-dialog-title">
-    <div class="dialog-heading">
-      <div><p class="eyebrow">ÁREA DE CAPTURA</p><h2 id="region-dialog-title">Selecciona la porción</h2></div>
-    </div>
-    <p class="region-dialog-copy">Arrastra sobre la vista para marcar el área que quieres capturar.</p>
-    <div id="region-preview-frame" class="region-preview-frame">
-      <video id="region-preview-video" muted playsinline></video>
-      <div id="region-selection-box" class="region-selection-box" hidden></div>
-    </div>
-    <div class="region-dialog-actions">
-      <span id="region-size-label" class="region-size-label">Marca un área</span>
-      <div><button id="cancel-region-selection" class="secondary-button" type="button">Cancelar</button><button id="confirm-region-selection" class="primary-button" type="button" disabled>Usar esta área</button></div>
-    </div>
-  </dialog>
+  <video id="region-preview-video" class="capture-processing-video" muted playsinline aria-hidden="true"></video>
 </body>
 </html>

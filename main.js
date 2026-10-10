@@ -1,5 +1,6 @@
-const { app, BrowserWindow, desktopCapturer, dialog, globalShortcut, ipcMain, Menu, nativeImage, session, Tray } = require('electron');
-const { spawn } = require('node:child_process');
+const { app, BrowserWindow, desktopCapturer, dialog, globalShortcut, ipcMain, Menu, nativeImage, screen, session, Tray } = require('electron');
+const { spawn, execFile } = require('node:child_process');
+const { promisify } = require('node:util');
 const fs = require('node:fs');
 const fsp = require('node:fs/promises');
 const path = require('node:path');
@@ -10,9 +11,23 @@ const { Transform } = require('node:stream');
 const { fileURLToPath } = require('node:url');
 const { allowMicrophoneRequest } = require('./src/permission-policy');
 const { chooseUniqueMediaPath } = require('./src/save-paths');
+const { mapRegionToBounds } = require('./src/region-geometry');
+const { mapPhysicalRectToDisplay } = require('./src/window-geometry');
+const execFileAsync = promisify(execFile);
 
 const rendererPath = path.join(__dirname, 'src', 'index.html');
 let mainWindow;
+let regionOverlayWindow;
+let regionOverlayReadyPromise;
+let regionOverlaySourceId;
+let regionOverlaySourceBounds;
+let regionOverlayGeneration = 0;
+let regionOverlayPreviousAlwaysOnTop = false;
+let regionOverlayChangedTopmost = false;
+let regionSelectionWindow;
+let regionSelectionBounds;
+let regionSelectionResolve;
+let regionSelectionReject;
 let tray;
 let compactModeEnabled = false;
 let compactSettingsExpanded = false;
@@ -55,12 +70,274 @@ function registerHandler(channel, handler) {
   });
 }
 
+function getLoginItemIdentity() {
+  return { path: process.execPath, args: app.isPackaged ? [] : [app.getAppPath()] };
+}
+
 async function getDesktopSources() {
   return desktopCapturer.getSources({
     types: ['screen', 'window'],
     thumbnailSize: { width: 480, height: 270 },
     fetchWindowIcons: true
   });
+}
+
+async function getWindowCaptureBounds(source) {
+  const match = /^window:(\d+):/.exec(source.id);
+  if (!match) throw new Error('No se pudo identificar la ventana capturada.');
+  const handle = BigInt(match[1]);
+  const script = `Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left; public int Top; public int Right; public int Bottom; } [StructLayout(LayoutKind.Sequential)] public struct MONITORINFO { public int cbSize; public RECT rcMonitor; public RECT rcWork; public uint dwFlags; } public static class WinScreenNative { [DllImport("user32.dll", SetLastError=true)] public static extern IntPtr SetThreadDpiAwarenessContext(IntPtr dpiContext); [DllImport("user32.dll", SetLastError=true)] public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect); [DllImport("dwmapi.dll")] public static extern int DwmGetWindowAttribute(IntPtr hWnd, int attribute, ref RECT rect, int size); [DllImport("user32.dll")] public static extern IntPtr MonitorFromWindow(IntPtr hWnd, uint flags); [DllImport("user32.dll", SetLastError=true)] public static extern bool GetMonitorInfo(IntPtr monitor, ref MONITORINFO info); }'; $previousDpiContext = [WinScreenNative]::SetThreadDpiAwarenessContext([IntPtr](-4)); if ($previousDpiContext -eq [IntPtr]::Zero) { exit 4 }; $handle = [IntPtr]${handle}; $rect = New-Object RECT; if (-not [WinScreenNative]::GetWindowRect($handle, [ref]$rect)) { exit 2 }; $visibleRect = New-Object RECT; if ([WinScreenNative]::DwmGetWindowAttribute($handle, 9, [ref]$visibleRect, [Runtime.InteropServices.Marshal]::SizeOf($visibleRect)) -eq 0) { $rect = $visibleRect }; $monitor = [WinScreenNative]::MonitorFromWindow($handle, 2); $info = New-Object MONITORINFO; $info.cbSize = [Runtime.InteropServices.Marshal]::SizeOf($info); if (-not [WinScreenNative]::GetMonitorInfo($monitor, [ref]$info)) { exit 3 }; [Console]::WriteLine("$($rect.Left),$($rect.Top),$($rect.Right - $rect.Left),$($rect.Bottom - $rect.Top),$($info.rcMonitor.Left),$($info.rcMonitor.Top),$($info.rcMonitor.Right - $info.rcMonitor.Left),$($info.rcMonitor.Bottom - $info.rcMonitor.Top)")`;
+  const encodedScript = Buffer.from(script, 'utf16le').toString('base64');
+  const { stdout } = await execFileAsync('powershell.exe', [
+    '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', encodedScript
+  ], { windowsHide: true, timeout: 5000, maxBuffer: 1024 * 1024 });
+  const values = stdout.trim().split(',').map(Number);
+  if (values.length !== 8 || !values.every(Number.isFinite) || values[2] <= 0 || values[3] <= 0 || values[6] <= 0 || values[7] <= 0) {
+    throw new Error('No se pudo obtener la posición de la ventana capturada.');
+  }
+  const displays = screen.getAllDisplays();
+  const display = displays.find((item) => String(item.id) === source.display_id)
+    || displays.reduce((nearest, item) => {
+      const scale = item.scaleFactor || 1;
+      const centerX = (values[0] + values[2] / 2) / scale;
+      const centerY = (values[1] + values[3] / 2) / scale;
+      const distance = Math.hypot(centerX - (item.bounds.x + item.bounds.width / 2), centerY - (item.bounds.y + item.bounds.height / 2));
+      const nearestScale = nearest?.scaleFactor || 1;
+      const nearestCenterX = (values[0] + values[2] / 2) / nearestScale;
+      const nearestCenterY = (values[1] + values[3] / 2) / nearestScale;
+      const nearestDistance = nearest ? Math.hypot(nearestCenterX - (nearest.bounds.x + nearest.bounds.width / 2), nearestCenterY - (nearest.bounds.y + nearest.bounds.height / 2)) : Infinity;
+      return distance < nearestDistance ? item : nearest;
+    }, null);
+  if (!display) throw new Error('No se encontró la pantalla de la ventana seleccionada.');
+  const [left, top, width, height, monitorLeft, monitorTop, monitorWidth, monitorHeight] = values;
+  return mapPhysicalRectToDisplay(
+    { x: left, y: top, width, height },
+    { x: monitorLeft, y: monitorTop, width: monitorWidth, height: monitorHeight },
+    display
+  );
+}
+
+async function getCaptureSourceBounds(source) {
+  if (source.id.startsWith('window:')) return getWindowCaptureBounds(source);
+  const displays = screen.getAllDisplays();
+  const displayId = source.display_id || source.id.match(/^screen:(\d+)/)?.[1];
+  const display = displays.find((item) => String(item.id) === displayId) || displays[0];
+  if (!display) throw new Error('No se encontró la pantalla de la fuente seleccionada.');
+  return display.bounds;
+}
+
+async function updateRegionOverlay(region, frame, mode = 'region') {
+  if (!region) {
+    hideRegionOverlay();
+    return;
+  }
+  if (!selectedCapture.source || !frame || !Number.isFinite(frame.width) || !Number.isFinite(frame.height)
+    || ![region.x, region.y, region.width, region.height].every(Number.isFinite)
+    || region.width < 16 || region.height < 16) {
+    throw new Error('No se pudo actualizar el resaltado del área.');
+  }
+  const sourceId = selectedCapture.source.id;
+  const generation = regionOverlayGeneration;
+  if (regionOverlaySourceId !== sourceId || !regionOverlaySourceBounds) {
+    regionOverlaySourceId = sourceId;
+    regionOverlaySourceBounds = getCaptureSourceBounds(selectedCapture.source);
+  }
+  const sourceBounds = await regionOverlaySourceBounds;
+  if (generation !== regionOverlayGeneration) return;
+  const bounds = mapRegionToBounds(region, frame, sourceBounds);
+  let overlayCreated = false;
+  if (!regionOverlayWindow || regionOverlayWindow.isDestroyed()) {
+    if (mode === 'region') {
+      regionOverlayPreviousAlwaysOnTop = mainWindow.isAlwaysOnTop();
+      mainWindow.setAlwaysOnTop(true, 'floating');
+      regionOverlayChangedTopmost = true;
+    }
+    try {
+      const overlay = new BrowserWindow({
+        x: bounds.x,
+        y: bounds.y,
+        width: bounds.width,
+        height: bounds.height,
+        frame: false,
+        transparent: true,
+        backgroundColor: '#00000000',
+        hasShadow: false,
+        focusable: false,
+        skipTaskbar: true,
+        show: false,
+        webPreferences: {
+          preload: path.join(__dirname, 'src', 'region-overlay-preload.js'),
+          nodeIntegration: false,
+          contextIsolation: true,
+          sandbox: true,
+          webSecurity: true
+        }
+      });
+      regionOverlayWindow = overlay;
+      overlayCreated = true;
+      overlay.setAlwaysOnTop(true, 'floating');
+      overlay.setIgnoreMouseEvents(true);
+      overlay.on('closed', () => { if (regionOverlayWindow === overlay) regionOverlayWindow = null; });
+      regionOverlayReadyPromise = overlay.loadFile(path.join(__dirname, 'src', 'region-overlay.html')).then(() => {
+        if (generation === regionOverlayGeneration && !overlay.isDestroyed()) overlay.showInactive();
+      });
+    } catch (error) {
+      hideRegionOverlay();
+      throw error;
+    }
+  } else {
+    regionOverlayWindow.setBounds(bounds, false);
+  }
+  try {
+    await regionOverlayReadyPromise;
+  } catch (error) {
+    hideRegionOverlay();
+    throw error;
+  }
+  if (generation !== regionOverlayGeneration || !regionOverlayWindow || regionOverlayWindow.isDestroyed()) return;
+  regionOverlayWindow.setBounds(bounds, false);
+  regionOverlayWindow.webContents.send('region-highlight', { width: bounds.width, height: bounds.height, mode });
+  if (overlayCreated && mode === 'region') mainWindow.moveTop();
+}
+
+async function showSelectedSourceHighlight(sourceId) {
+  const source = selectedCapture.source;
+  if (!source || source.id !== sourceId || (!source.id.startsWith('screen:') && !source.id.startsWith('window:'))) {
+    hideRegionOverlay();
+    return;
+  }
+  if (regionOverlayWindow && !regionOverlayWindow.isDestroyed() && regionOverlaySourceId === sourceId) return;
+  hideRegionOverlay();
+  const generation = regionOverlayGeneration;
+  const size = source.thumbnail.getSize();
+  regionOverlaySourceId = sourceId;
+  regionOverlaySourceBounds = getCaptureSourceBounds(source);
+  await regionOverlaySourceBounds;
+  if (generation !== regionOverlayGeneration || selectedCapture.source?.id !== sourceId) return;
+  await updateRegionOverlay({ x: 0, y: 0, width: size.width, height: size.height }, size, 'source');
+}
+
+async function showSelectedRegionHighlight(region, sourceId) {
+  const source = selectedCapture.source;
+  if (!source || !source.id.startsWith('screen:') || source.id !== sourceId || !isValidDesktopRegion(region)) {
+    throw new Error('No se pudo resaltar la porción seleccionada en el escritorio.');
+  }
+  const bounds = await getCaptureSourceBounds(source);
+  if (selectedCapture.source?.id !== sourceId) return;
+  const rectangle = {
+    x: region.x * bounds.width,
+    y: region.y * bounds.height,
+    width: region.width * bounds.width,
+    height: region.height * bounds.height
+  };
+  const frame = { width: bounds.width, height: bounds.height };
+  return updateRegionOverlay(rectangle, frame, 'persistent-region');
+}
+
+function finishDesktopRegionSelection(region, error) {
+  const selectionWindow = regionSelectionWindow;
+  const resolve = regionSelectionResolve;
+  const reject = regionSelectionReject;
+  regionSelectionWindow = null;
+  regionSelectionBounds = null;
+  regionSelectionResolve = null;
+  regionSelectionReject = null;
+  if (selectionWindow && !selectionWindow.isDestroyed()) {
+    selectionWindow.hide();
+    selectionWindow.close();
+  }
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.show();
+    mainWindow.focus();
+  }
+  if (error) reject?.(error);
+  else resolve?.(region);
+}
+
+async function selectCaptureRegionOnDesktop() {
+  const source = selectedCapture.source;
+  if (!source?.id.startsWith('screen:')) {
+    throw new Error('Selecciona una pantalla para marcar una porción del escritorio.');
+  }
+  if (regionSelectionWindow) throw new Error('Ya hay una selección de área en curso.');
+  const bounds = await getCaptureSourceBounds(source);
+  hideRegionOverlay();
+  return new Promise((resolve, reject) => {
+    regionSelectionResolve = resolve;
+    regionSelectionReject = reject;
+    regionSelectionBounds = bounds;
+    try {
+      const overlay = new BrowserWindow({
+        x: bounds.x,
+        y: bounds.y,
+        width: bounds.width,
+        height: bounds.height,
+        frame: false,
+        transparent: true,
+        backgroundColor: '#00000000',
+        hasShadow: false,
+        focusable: true,
+        movable: false,
+        resizable: false,
+        skipTaskbar: true,
+        show: false,
+        webPreferences: {
+          preload: path.join(__dirname, 'src', 'region-overlay-preload.js'),
+          nodeIntegration: false,
+          contextIsolation: true,
+          sandbox: true,
+          webSecurity: true
+        }
+      });
+      regionSelectionWindow = overlay;
+      overlay.setAlwaysOnTop(true, 'floating');
+      overlay.setIgnoreMouseEvents(false);
+      overlay.on('closed', () => {
+        if (regionSelectionWindow === overlay) finishDesktopRegionSelection(null);
+      });
+      overlay.loadFile(path.join(__dirname, 'src', 'region-overlay.html')).then(() => {
+        if (regionSelectionWindow !== overlay || overlay.isDestroyed()) return;
+        overlay.webContents.send('region-selection-start', { width: bounds.width, height: bounds.height });
+        mainWindow.hide();
+        overlay.show();
+        overlay.focus();
+      }).catch((error) => finishDesktopRegionSelection(null, error));
+      mainWindow.hide();
+    } catch (error) {
+      finishDesktopRegionSelection(null, error);
+    }
+  });
+}
+
+function isValidDesktopRegion(region) {
+  return region && typeof region === 'object'
+    && [region.x, region.y, region.width, region.height].every(Number.isFinite)
+    && region.x >= 0 && region.y >= 0 && region.width > 0 && region.height > 0
+    && region.x + region.width <= 1.001 && region.y + region.height <= 1.001;
+}
+
+function handleDesktopRegionSelection(event, region) {
+  const selectionWindow = regionSelectionWindow;
+  if (!selectionWindow || selectionWindow.isDestroyed() || event.sender !== selectionWindow.webContents) return;
+  if (region !== null && !isValidDesktopRegion(region)) return;
+  if (region && (!regionSelectionBounds || region.width * regionSelectionBounds.width < 16 || region.height * regionSelectionBounds.height < 16)) return;
+  finishDesktopRegionSelection(region);
+}
+
+function hideRegionOverlay() {
+  regionOverlayGeneration += 1;
+  if (regionOverlayWindow && !regionOverlayWindow.isDestroyed()) {
+    regionOverlayWindow.hide();
+    regionOverlayWindow.close();
+  }
+  regionOverlayWindow = null;
+  regionOverlayReadyPromise = null;
+  regionOverlaySourceId = null;
+  regionOverlaySourceBounds = null;
+  if (regionOverlayChangedTopmost && mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.setAlwaysOnTop(regionOverlayPreviousAlwaysOnTop, regionOverlayPreviousAlwaysOnTop ? 'floating' : 'normal');
+  }
+  regionOverlayChangedTopmost = false;
 }
 
 async function getSourceById(sourceId) {
@@ -405,6 +682,7 @@ function configureCaptureHandler() {
         callback(null);
         return;
       }
+      hideRegionOverlay();
       callback({
         video: source,
         ...(request.audioRequested && selectedCapture.systemAudio && process.platform === 'win32'
@@ -479,7 +757,15 @@ function createRecordingSession() {
   const id = randomUUID();
   const filePath = path.join(app.getPath('temp'), `winscreen-${id}.webm`);
   const stream = fs.createWriteStream(filePath, { flags: 'wx' });
-  const currentSession = { id, filePath, stream, status: 'recording', writeChain: Promise.resolve(), writeError: null };
+  const currentSession = {
+    id,
+    filePath,
+    stream,
+    sourceName: selectedCapture.source?.name,
+    status: 'recording',
+    writeChain: Promise.resolve(),
+    writeError: null
+  };
   stream.on('error', (error) => { currentSession.writeError = error; });
   recordingSession = currentSession;
   return id;
@@ -635,9 +921,9 @@ async function saveRecording(id, format) {
   if (!['webm', 'mp4', 'mkv', 'gif'].includes(format)) throw new Error('El formato de salida seleccionado no está permitido.');
 
   const label = { webm: 'WebM', mp4: 'MP4', mkv: 'MKV', gif: 'GIF' }[format];
-  const sourceName = safeCaptureFileName(selectedCapture.source?.name);
-  const defaultName = `${sourceName}-${new Date().toISOString().replace(/[:.]/g, '-')}.${format}`;
   const currentSession = recordingSession;
+  const sourceName = safeCaptureFileName(currentSession.sourceName);
+  const defaultName = `${sourceName}-${new Date().toISOString().replace(/[:.]/g, '-')}.${format}`;
   const saveDirectory = await getSaveDirectoryStatus();
   let overwriteConfirmed = false;
   let targetPath;
@@ -818,6 +1104,14 @@ function registerIpcHandlers() {
   registerHandler('get-save-directory', getSaveDirectoryStatus);
   registerHandler('choose-save-directory', chooseSaveDirectory);
   registerHandler('reset-save-directory', resetSaveDirectory);
+  registerHandler('get-start-with-windows', async () => ({
+    enabled: app.getLoginItemSettings(getLoginItemIdentity()).openAtLogin
+  }));
+  registerHandler('set-start-with-windows', async (enabled) => {
+    if (typeof enabled !== 'boolean') throw new Error('La opción de inicio debe ser verdadera o falsa.');
+    app.setLoginItemSettings({ ...getLoginItemIdentity(), openAtLogin: enabled, enabled: true });
+    return { enabled: app.getLoginItemSettings(getLoginItemIdentity()).openAtLogin };
+  });
 
   registerHandler('set-compact-mode', async (compact) => {
     if (typeof compact !== 'boolean') throw new Error('El modo compacto solicitado no es válido.');
@@ -851,10 +1145,18 @@ function registerIpcHandlers() {
     return sources.map((source) => ({
       id: source.id,
       name: source.name,
+      displayId: source.display_id,
       thumbnail: source.thumbnail.toDataURL(),
       icon: source.appIcon?.toDataURL() ?? null
     }));
   });
+
+  registerHandler('update-region-highlight', updateRegionOverlay);
+  registerHandler('show-selected-source-highlight', showSelectedSourceHighlight);
+  registerHandler('show-selected-region-highlight', showSelectedRegionHighlight);
+  registerHandler('hide-region-highlight', async () => hideRegionOverlay());
+  registerHandler('select-capture-region', selectCaptureRegionOnDesktop);
+  ipcMain.on('region-selection-complete', handleDesktopRegionSelection);
 
   registerHandler('configure-capture', async (options) => {
     if (!options || typeof options !== 'object' || typeof options.systemAudio !== 'boolean' || typeof options.microphone !== 'boolean') {
@@ -870,6 +1172,11 @@ function registerIpcHandlers() {
       microphone: options.microphone
     };
     return { systemAudioAvailable };
+  });
+  registerHandler('clear-capture', async () => {
+    selectedCapture = { source: null, systemAudio: false, microphone: false };
+    hideRegionOverlay();
+    return { systemAudioAvailable: process.platform === 'win32' };
   });
 
   registerHandler('begin-recording', async () => {

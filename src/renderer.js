@@ -35,6 +35,7 @@
     compactStop: document.getElementById('compact-stop'),
     compactSave: document.getElementById('compact-save'),
     compactDiscard: document.getElementById('compact-discard'),
+    compactRecoveries: document.getElementById('compact-recoveries'),
     compactExpand: document.getElementById('compact-expand'),
     developerInfoButton: document.getElementById('developer-info-button'),
     developerDialog: document.getElementById('developer-dialog'),
@@ -53,6 +54,10 @@
     sourceGrid: document.getElementById('source-grid'),
     captureArea: document.getElementById('capture-area'),
     sourceError: document.getElementById('source-error'),
+    recoveryNotice: document.getElementById('recovery-notice'),
+    recoveryNoticeTitle: document.getElementById('recovery-notice-title'),
+    recoveryNoticeDescription: document.getElementById('recovery-notice-description'),
+    openRecoveryWindow: document.getElementById('open-recovery-window'),
     selectionNote: document.getElementById('selection-note'),
     refresh: document.getElementById('refresh-sources'),
     idleActions: document.getElementById('idle-actions'),
@@ -91,6 +96,7 @@
     pausedDuration: 0,
     chunkError: null,
     stopping: false,
+    preserveAfterComplete: false,
     hasAudio: false,
     captureConfigReady: false,
     captureConfigVersion: 0,
@@ -279,6 +285,7 @@
     'model-download': 'Descargando el modelo local de transcripción…',
     'audio-preparation': 'Preparando el audio para transcribir…',
     transcription: 'Transcribiendo en este equipo…',
+    conversion: 'Preparando el formato de video…',
     finalizing: 'Guardando video y subtítulos…'
   };
 
@@ -288,6 +295,15 @@
     elements.saveProgress.textContent = message;
     elements.saveProgress.hidden = false;
     setStatus(message, 'busy');
+  });
+
+  window.electronAPI.onPreserveRecordingForExit(async (recordingId) => {
+    if (!state.recordingId || state.recordingId !== recordingId) {
+      await window.electronAPI.acknowledgeRecordingPreservedForExit(recordingId).catch(() => {});
+      return;
+    }
+    state.preserveAfterComplete = true;
+    if (state.phase === 'recording') requestStopRecording();
   });
 
   function updateTimer() {
@@ -342,6 +358,7 @@
     elements.compactSave.textContent = phase === 'saving' ? 'Procesando…' : (elements.saveWebm.hidden ? 'Guardar' : 'Guardar WebM');
     elements.compactDiscard.hidden = phase !== 'ready';
     elements.compactDiscard.disabled = phase !== 'ready';
+    elements.compactRecoveries.disabled = controlsDisabled;
     if (controlsDisabled && elements.compactSettings.open) elements.compactSettings.open = false;
     elements.save.textContent = phase === 'saving' ? 'Procesando…' : `Guardar ${elements.format.value.toUpperCase()}`;
     const captureAreaDisabled = controlsDisabled && phase !== 'capturing-image';
@@ -353,6 +370,30 @@
     }
     syncSelectedSourceHighlight();
   }
+
+  function updateRecoveryNotice(count) {
+    const recoveryCount = Number.isInteger(count) && count > 0 ? count : 0;
+    const hasRecoveries = recoveryCount > 0;
+    elements.recoveryNotice.hidden = !hasRecoveries;
+    elements.compactRecoveries.hidden = !hasRecoveries;
+    elements.recoveryNoticeTitle.textContent = recoveryCount === 1
+      ? 'Hay una grabación por recuperar'
+      : `Hay ${recoveryCount} grabaciones por recuperar`;
+    elements.recoveryNoticeDescription.textContent = 'Las capturas pendientes se conservan hasta que las guardes o descartes.';
+    elements.compactRecoveries.textContent = recoveryCount === 1 ? 'Recuperar (1)' : `Recuperar (${recoveryCount})`;
+  }
+
+  async function refreshRecoveryNotice() {
+    try {
+      const sessions = await window.electronAPI.getRecoverySessions();
+      updateRecoveryNotice(sessions.length);
+    } catch {
+      updateRecoveryNotice(0);
+    }
+  }
+
+  window.electronAPI.onRecoverySessionsChanged((count) => updateRecoveryNotice(count));
+  window.addEventListener('focus', refreshRecoveryNotice);
 
   function syncSelectedSourceHighlight() {
     const selected = state.sources.find((source) => source.id === state.selectedSourceId);
@@ -969,7 +1010,7 @@
     const mimeType = chooseRecorderMimeType();
     if (!mimeType) throw new Error('Este sistema no ofrece un formato WebM compatible para grabar.');
 
-    state.recordingId = await window.electronAPI.beginRecording();
+    state.recordingId = await window.electronAPI.beginRecording(state.hasAudio);
     state.chunkQueue = Promise.resolve();
     state.pendingChunkBytes = 0;
     state.pausedAt = 0;
@@ -1054,23 +1095,28 @@
       return;
     }
     if (state.chunkError) {
+      const interruptedId = state.recordingId;
       try {
-        await window.electronAPI.completeRecording(state.recordingId, state.hasAudio);
-        await window.electronAPI.discardRecording(state.recordingId);
+        await window.electronAPI.abortRecording(state.recordingId);
       } catch {
-        // The main process discards a session whose disk write failed.
+        // The main process retains any chunks that reached the recovery file.
+      }
+      if (state.preserveAfterComplete) {
+        await window.electronAPI.acknowledgeRecordingPreservedForExit(interruptedId).catch(() => {});
+        state.preserveAfterComplete = false;
       }
       state.recordingId = null;
       state.phase = 'idle';
       setPhase('idle');
-      setStatus('No se pudo escribir la grabación');
-      elements.sourceError.textContent = `No se pudo guardar temporalmente la captura: ${state.chunkError.message}`;
+      setStatus('La grabación quedó disponible para recuperar');
+      elements.sourceError.textContent = `La captura se interrumpió. Los fragmentos guardados se conservaron para intentar recuperarlos: ${state.chunkError.message}`;
       elements.sourceError.hidden = false;
       return;
     }
 
     try {
-      await window.electronAPI.completeRecording(state.recordingId, state.hasAudio);
+      const completedId = state.recordingId;
+      await window.electronAPI.completeRecording(completedId, state.hasAudio);
       await clearCaptureSelection();
       state.phase = 'ready';
       elements.saveTitle.textContent = 'Tu captura está lista';
@@ -1079,14 +1125,25 @@
       elements.saveWebm.textContent = 'Guardar original WebM';
       elements.saveProgress.hidden = true;
       setPhase('ready');
+      if (state.preserveAfterComplete) {
+        state.recordingId = null;
+        state.preserveAfterComplete = false;
+        await window.electronAPI.acknowledgeRecordingPreservedForExit(completedId);
+        return;
+      }
       await saveCurrentRecording(elements.format.value);
     } catch (error) {
+      const failedId = state.recordingId;
       state.recordingId = null;
       state.phase = 'idle';
       setPhase('idle');
       setStatus('No se pudo completar la grabación');
       elements.sourceError.textContent = error.message;
       elements.sourceError.hidden = false;
+      if (state.preserveAfterComplete && failedId) {
+        await window.electronAPI.acknowledgeRecordingPreservedForExit(failedId).catch(() => {});
+        state.preserveAfterComplete = false;
+      }
     }
   }
 
@@ -1170,8 +1227,17 @@
       } catch {}
     }
     stopTracks();
+    let preservedRecordingId = null;
     if (state.recordingId) {
-      try { await window.electronAPI.abortRecording(state.recordingId); } catch {}
+      const failedId = state.recordingId;
+      try {
+        const result = await window.electronAPI.abortRecording(failedId);
+        if (result.status === 'preserved') preservedRecordingId = failedId;
+      } catch {}
+      if (state.preserveAfterComplete) {
+        await window.electronAPI.acknowledgeRecordingPreservedForExit(failedId).catch(() => {});
+        state.preserveAfterComplete = false;
+      }
     }
     state.recordingId = null;
     state.regionRect = null;
@@ -1181,8 +1247,10 @@
     state.phase = 'idle';
     setPhase('idle');
     const action = elements.captureMode.value === 'image' ? 'capturar la imagen' : 'iniciar la captura';
-    setStatus(elements.captureMode.value === 'image' ? 'No se pudo generar la imagen' : 'No se pudo iniciar la captura');
-    elements.sourceError.textContent = `No se pudo ${action}: ${message}`;
+    setStatus(preservedRecordingId ? 'La captura parcial quedó disponible para recuperar' : elements.captureMode.value === 'image' ? 'No se pudo generar la imagen' : 'No se pudo iniciar la captura');
+    elements.sourceError.textContent = preservedRecordingId
+      ? `La captura se interrumpió. Los fragmentos guardados siguen disponibles en la ventana de recuperación. ${message}`
+      : `No se pudo ${action}: ${message}`;
     elements.sourceError.hidden = false;
   }
 
@@ -1326,6 +1394,14 @@
   });
   elements.save.addEventListener('click', () => saveCurrentRecording(elements.format.value));
   elements.saveWebm.addEventListener('click', () => saveCurrentRecording('webm'));
+  const showRecoveryWindow = () => {
+    window.electronAPI.openRecoveryWindow().catch((error) => {
+      elements.sourceError.textContent = `No se pudo abrir la ventana de recuperación: ${error.message}`;
+      elements.sourceError.hidden = false;
+    });
+  };
+  elements.openRecoveryWindow.addEventListener('click', showRecoveryWindow);
+  elements.compactRecoveries.addEventListener('click', showRecoveryWindow);
   elements.discard.addEventListener('click', async () => {
     if (state.phase !== 'ready' || !state.recordingId || !window.confirm('¿Descartar la grabación sin guardar?')) return;
     try {
@@ -1334,6 +1410,7 @@
       state.phase = 'idle';
       setPhase('idle');
       setStatus('Grabación descartada');
+      await refreshRecoveryNotice();
     } catch (error) {
       elements.saveDescription.textContent = error.message;
     }
@@ -1350,4 +1427,5 @@
   loadSaveDirectory();
   loadStartWithWindows();
   loadSources();
+  refreshRecoveryNotice();
 })();

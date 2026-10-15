@@ -88,6 +88,7 @@
         </details>
 
         <div class="compact-actions">
+          <button id="compact-recoveries" class="secondary-button compact-action" type="button" hidden>Recuperar</button>
           <button id="compact-start" class="primary-button compact-action compact-start" type="button" title="Iniciar grabación" aria-label="Iniciar grabación"><span class="record-icon" aria-hidden="true"></span>Grabar</button>
           <button id="compact-cancel-countdown" class="secondary-button compact-action" type="button" hidden>Cancelar</button>
           <button id="compact-stop" class="stop-button compact-action" type="button" hidden>Detener</button>
@@ -115,6 +116,15 @@
         </div>
       </div>
     </header>
+
+    <aside id="recovery-notice" class="recovery-notice" role="status" aria-live="polite" hidden>
+      <span class="recovery-notice-icon" aria-hidden="true">↻</span>
+      <div class="recovery-notice-copy">
+        <strong id="recovery-notice-title">Hay grabaciones por recuperar</strong>
+        <span id="recovery-notice-description">Tus videos pendientes siguen disponibles.</span>
+      </div>
+      <button id="open-recovery-window" class="primary-button recovery-notice-button" type="button">Revisar grabaciones</button>
+    </aside>
 
     <section class="intro">
       <div>

@@ -25,7 +25,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   updateRegionHighlight: (region, frame) => ipcRenderer.invoke('update-region-highlight', region, frame),
   hideRegionHighlight: () => ipcRenderer.invoke('hide-region-highlight'),
   getCaptureFailure: () => ipcRenderer.invoke('get-capture-failure'),
-  beginRecording: () => ipcRenderer.invoke('begin-recording'),
+  beginRecording: (hasAudio) => ipcRenderer.invoke('begin-recording', hasAudio),
   appendRecordingChunk: (id, chunk) => ipcRenderer.invoke('append-recording-chunk', id, chunk),
   completeRecording: (id, hasAudio) => ipcRenderer.invoke('complete-recording', id, hasAudio),
   saveRecording: (id, format) => ipcRenderer.invoke('save-recording', id, format),
@@ -37,5 +37,20 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return () => ipcRenderer.removeListener('save-progress', listener);
   },
   discardRecording: (id) => ipcRenderer.invoke('discard-recording', id),
-  abortRecording: (id) => ipcRenderer.invoke('abort-recording', id)
+  abortRecording: (id) => ipcRenderer.invoke('abort-recording', id),
+  getRecoverySessions: () => ipcRenderer.invoke('get-recovery-sessions-main'),
+  openRecoveryWindow: () => ipcRenderer.invoke('open-recovery-window'),
+  acknowledgeRecordingPreservedForExit: (id) => ipcRenderer.invoke('recording-preserved-for-exit', id),
+  onRecoverySessionsChanged: (callback) => {
+    if (typeof callback !== 'function') return () => {};
+    const listener = (_event, count) => callback(count);
+    ipcRenderer.on('recovery-sessions-changed', listener);
+    return () => ipcRenderer.removeListener('recovery-sessions-changed', listener);
+  },
+  onPreserveRecordingForExit: (callback) => {
+    if (typeof callback !== 'function') return () => {};
+    const listener = (_event, id) => callback(id);
+    ipcRenderer.on('preserve-recording-for-exit', listener);
+    return () => ipcRenderer.removeListener('preserve-recording-for-exit', listener);
+  }
 });

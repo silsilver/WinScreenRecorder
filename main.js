@@ -10,12 +10,14 @@ const { pipeline } = require('node:stream/promises');
 const { Transform } = require('node:stream');
 const { fileURLToPath } = require('node:url');
 const { allowMicrophoneRequest } = require('./src/permission-policy');
+const { createRecoveryStore } = require('./src/recording-recovery');
 const { chooseUniqueMediaPath } = require('./src/save-paths');
 const { mapRegionToBounds } = require('./src/region-geometry');
 const { mapPhysicalRectToDisplay } = require('./src/window-geometry');
 const execFileAsync = promisify(execFile);
 
 const rendererPath = path.join(__dirname, 'src', 'index.html');
+const recoveryRendererPath = path.join(__dirname, 'src', 'recovery.html');
 const WINDOWS_STARTUP_ARGUMENT = '--started-from-windows';
 const startedFromWindowsLogin = process.platform === 'win32'
   && process.argv.includes(WINDOWS_STARTUP_ARGUMENT);
@@ -39,6 +41,14 @@ let windowMaximized = false;
 let normalWindowBounds = null;
 let selectedCapture = { source: null, systemAudio: false, microphone: false };
 let recordingSession = null;
+let recoveryStore = null;
+let recoveryWindow = null;
+let recoverySaveOwner = null;
+let preserveRecordingForExitResolve = null;
+let preserveRecordingForExitTimer = null;
+let activeSavePromise = null;
+let isPreparingQuit = false;
+let allowQuitAfterPreservation = false;
 let activeChildProcess = null;
 let downloadRequest = null;
 let verifiedModelIdentity = null;
@@ -70,6 +80,26 @@ function registerHandler(channel, handler) {
       throw new Error('Solicitud IPC rechazada: origen no confiable.');
     }
     return handler(...args);
+  });
+}
+
+function isTrustedRecoveryRenderer(event) {
+  if (!recoveryWindow || event.sender !== recoveryWindow.webContents || event.senderFrame !== recoveryWindow.webContents.mainFrame) {
+    return false;
+  }
+  try {
+    return path.resolve(fileURLToPath(event.senderFrame.url)) === path.resolve(recoveryRendererPath);
+  } catch {
+    return false;
+  }
+}
+
+function registerRecoveryHandler(channel, handler) {
+  ipcMain.handle(channel, async (event, ...args) => {
+    if (!isTrustedRecoveryRenderer(event)) {
+      throw new Error('Solicitud de recuperación rechazada: origen no confiable.');
+    }
+    return handler(...args, recoveryWindow);
   });
 }
 
@@ -440,14 +470,53 @@ async function resetSaveDirectory() {
 }
 
 function notifySaveProgress(stage) {
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send('save-progress', { stage });
+  const targetWindow = recoverySaveOwner || mainWindow;
+  if (targetWindow && !targetWindow.isDestroyed()) {
+    targetWindow.webContents.send('save-progress', { stage });
   }
+}
+
+async function setRecoverySessionState(currentSession, state, failureStage = null, failureCode = null) {
+  if (!recoveryStore || !currentSession?.recoveryManaged) return;
+  const record = await recoveryStore.updateSession(currentSession.id, {
+    state,
+    failureStage,
+    failureCode
+  });
+  currentSession.recoveryRecord = record;
+}
+
+async function getRecoverySummaries() {
+  if (!recoveryStore) return [];
+  const sessions = await recoveryStore.listSessions();
+  return sessions.filter((record) => !recordingSession || record.id !== recordingSession.id).map((record) => ({
+    id: record.id,
+    sourceName: record.sourceName,
+    startedAt: record.startedAt,
+    state: record.state,
+    failureStage: record.failureStage,
+    failureCode: record.failureCode,
+    mediaExists: record.mediaExists,
+    mediaSize: record.mediaSize,
+    manifestInvalid: Boolean(record.manifestInvalid),
+    blockedByActiveRecording: Boolean(recordingSession)
+  }));
+}
+
+async function notifyRecoverySessionsChanged() {
+  const sessions = await getRecoverySummaries().catch(() => []);
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('recovery-sessions-changed', sessions.length);
+  }
+  if (recoveryWindow && !recoveryWindow.isDestroyed()) {
+    recoveryWindow.webContents.send('recovery-sessions-changed');
+  }
+  refreshTrayMenu(sessions.length);
 }
 
 function assertSaveSessionActive(currentSession) {
   if (recordingSession !== currentSession || currentSession.cancelRequested) {
-    throw new Error('El guardado se canceló y la captura se descartó.');
+    throw new Error('El guardado se canceló.');
   }
 }
 
@@ -590,6 +659,48 @@ function showMainWindow() {
   mainWindow.focus();
 }
 
+function openRecoveryWindow() {
+  if (recoveryWindow && !recoveryWindow.isDestroyed()) {
+    if (recoveryWindow.isMinimized()) recoveryWindow.restore();
+    recoveryWindow.show();
+    recoveryWindow.focus();
+    return;
+  }
+
+  recoveryWindow = new BrowserWindow({
+    width: 760,
+    height: 620,
+    minWidth: 620,
+    minHeight: 480,
+    show: false,
+    autoHideMenuBar: true,
+    backgroundColor: '#0b1220',
+    icon: path.join(__dirname, 'src', 'app-icon.ico'),
+    webPreferences: {
+      preload: path.join(__dirname, 'src', 'recovery-preload.js'),
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: true,
+      webSecurity: true
+    }
+  });
+  recoveryWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  recoveryWindow.webContents.on('will-navigate', (event, destination) => {
+    try {
+      if (path.resolve(fileURLToPath(destination)) !== path.resolve(recoveryRendererPath)) event.preventDefault();
+    } catch {
+      event.preventDefault();
+    }
+  });
+  recoveryWindow.once('ready-to-show', () => {
+    if (!recoveryWindow.isDestroyed()) recoveryWindow.show();
+  });
+  recoveryWindow.on('closed', () => {
+    recoveryWindow = null;
+  });
+  recoveryWindow.loadFile(recoveryRendererPath);
+}
+
 function restoreFullWindowState() {
   if (!fullWindowState) return;
   const { bounds, maximized } = fullWindowState;
@@ -647,15 +758,26 @@ function toggleCompactModeFromShortcut() {
   else toggleWhenReady();
 }
 
+function refreshTrayMenu(recoveryCount = 0) {
+  if (!tray) return;
+  const template = [
+    { label: `Abrir ${app.getName()}`, click: showMainWindow }
+  ];
+  if (recoveryCount > 0) {
+    template.push({
+      label: `Hay grabaciones por recuperar (${recoveryCount})`,
+      click: openRecoveryWindow
+    });
+  }
+  template.push({ type: 'separator' }, { label: 'Salir', click: requestAppExit });
+  tray.setContextMenu(Menu.buildFromTemplate(template));
+}
+
 function createTray() {
   const iconPath = path.join(__dirname, 'src', 'app-icon.ico');
   tray = new Tray(nativeImage.createFromPath(iconPath).resize({ width: 16, height: 16 }));
   tray.setToolTip(app.getName());
-  tray.setContextMenu(Menu.buildFromTemplate([
-    { label: `Abrir ${app.getName()}`, click: showMainWindow },
-    { type: 'separator' },
-    { label: 'Salir', click: requestAppExit }
-  ]));
+  refreshTrayMenu();
   tray.on('click', showMainWindow);
   tray.on('double-click', showMainWindow);
 }
@@ -669,14 +791,39 @@ async function requestAppExit() {
       const { response } = await dialog.showMessageBox(mainWindow, {
         type: 'warning',
         title: 'Grabación sin guardar',
-        message: 'Hay una grabación activa o pendiente de guardar. Si sales, se eliminará.',
-        buttons: ['Seguir aquí', 'Salir sin guardar'],
+        message: 'Hay una grabación activa o pendiente de guardar. Se conservará en Recuperación para continuar después.',
+        buttons: ['Seguir aquí', 'Conservar y salir'],
         defaultId: 0,
         cancelId: 0,
         noLink: true
       });
       if (response !== 1) return;
-      await discardCurrentSession();
+      const currentSession = recordingSession;
+      if (currentSession.status === 'recording') {
+        const preserved = await new Promise((resolve) => {
+          preserveRecordingForExitResolve = resolve;
+          preserveRecordingForExitTimer = setTimeout(() => {
+            preserveRecordingForExitTimer = null;
+            preserveRecordingForExitResolve = null;
+            resolve(false);
+          }, 10000);
+          mainWindow.webContents.send('preserve-recording-for-exit', currentSession.id);
+        });
+        if (!preserved && recordingSession?.id === currentSession.id) {
+          await preserveCurrentSession(currentSession.id);
+        }
+      } else if (currentSession.status === 'saving') {
+        currentSession.cancelRequested = true;
+        if (downloadRequest) {
+          downloadRequest.destroy(new Error('Se conservará la grabación para reanudar el guardado después.'));
+          downloadRequest = null;
+        }
+        if (activeChildProcess && !activeChildProcess.killed) activeChildProcess.kill();
+        await activeSavePromise?.catch(() => {});
+        if (recordingSession === currentSession) recordingSession = null;
+      } else {
+        recordingSession = null;
+      }
     } catch (error) {
       dialog.showErrorBox('No se pudo salir', error.message);
       return;
@@ -685,6 +832,7 @@ async function requestAppExit() {
     }
   }
   allowWindowClose = true;
+  allowQuitAfterPreservation = true;
   app.quit();
 }
 
@@ -777,11 +925,33 @@ function configureCaptureHandler() {
   });
 }
 
-function createRecordingSession() {
-  if (recordingSession) throw new Error('Ya existe una grabación activa o pendiente de guardar.');
+async function createRecordingSession(hasAudio) {
+  if (recordingSession || activeSavePromise) throw new Error('Ya existe una grabación activa o pendiente de guardar.');
   const id = randomUUID();
-  const filePath = path.join(app.getPath('temp'), `winscreen-${id}.webm`);
-  const stream = fs.createWriteStream(filePath, { flags: 'wx' });
+  if (!recoveryStore) throw new Error('El sistema de recuperación todavía no está listo.');
+  const saveDirectory = await getSaveDirectoryStatus();
+  if (!saveDirectory.available) {
+    throw new Error('La carpeta de guardado no está disponible. Elige otra en Preferencias antes de grabar.');
+  }
+  const recoveryRecord = await recoveryStore.createSession({
+    id,
+    videoDirectory: saveDirectory.directory,
+    sourceName: selectedCapture.source?.name,
+    startedAt: new Date().toISOString(),
+    hasAudio: Boolean(hasAudio)
+  });
+  const filePath = recoveryRecord.mediaPath;
+  const stream = fs.createWriteStream(filePath, { flags: 'r+' });
+  try {
+    await new Promise((resolve, reject) => {
+      stream.once('open', resolve);
+      stream.once('error', reject);
+    });
+  } catch (error) {
+    stream.destroy();
+    await recoveryStore.removeSession(id).catch(() => {});
+    throw new Error(`No se pudo iniciar el archivo de recuperación: ${error.message}`);
+  }
   const currentSession = {
     id,
     filePath,
@@ -789,7 +959,9 @@ function createRecordingSession() {
     sourceName: selectedCapture.source?.name,
     status: 'recording',
     writeChain: Promise.resolve(),
-    writeError: null
+    writeError: null,
+    recoveryManaged: true,
+    recoveryRecord
   };
   stream.on('error', (error) => { currentSession.writeError = error; });
   recordingSession = currentSession;
@@ -939,55 +1111,201 @@ async function ensureSessionTranscript(currentSession) {
   }
 }
 
-async function saveRecording(id, format) {
-  if (!recordingSession || recordingSession.id !== id || recordingSession.status !== 'ready') {
+async function loadRecoveryRecording(id) {
+  if (!recoveryStore) throw new Error('El sistema de recuperación todavía no está listo.');
+  const record = await recoveryStore.getSession(id);
+  if (!record || record.manifestInvalid) throw new Error('La sesión de recuperación ya no está disponible.');
+  if (!record.mediaExists || record.mediaSize === 0) throw new Error('No se encontró un archivo recuperable para esta sesión.');
+  return {
+    id: record.id,
+    filePath: record.mediaPath,
+    sourceName: record.sourceName,
+    hasAudio: record.hasAudio,
+    status: record.state,
+    writeChain: Promise.resolve(),
+    writeError: null,
+    stream: null,
+    recoveryManaged: true,
+    recoveryRecord: record
+  };
+}
+
+async function repairInterruptedRecording(currentSession) {
+  const record = currentSession.recoveryRecord;
+  if (!record || !['recording', 'interrupted-recording'].includes(record.state)) return;
+  const mediaPath = currentSession.filePath;
+  const recoveryDirectory = path.dirname(mediaPath);
+  const backupPath = `${mediaPath}.repair-backup`;
+  const temporaryPath = path.join(recoveryDirectory, `.${currentSession.id}-${randomUUID()}.repair.partial.webm`);
+  let replacementComplete = false;
+  try {
+    try {
+      await fsp.access(mediaPath);
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+      await fsp.rename(backupPath, mediaPath);
+    }
+    if (fs.existsSync(backupPath)) await fsp.rm(backupPath, { force: true });
+    if ((await fsp.stat(mediaPath)).size === 0) throw new Error('El archivo parcial está vacío.');
+    await runChildProcess(getFfmpegPath(), [
+      '-nostdin', '-hide_banner', '-loglevel', 'error', '-fflags', '+genpts', '-i', mediaPath,
+      '-map', '0:v:0', '-map', '0:a:0?', '-c', 'copy', '-f', 'webm', temporaryPath
+    ], 'La recuperación de video');
+    if ((await fsp.stat(temporaryPath)).size === 0) throw new Error('La recuperación generó un archivo vacío.');
+    await fsp.rename(mediaPath, backupPath);
+    try {
+      await fsp.rename(temporaryPath, mediaPath);
+      replacementComplete = true;
+    } catch (error) {
+      await fsp.rename(backupPath, mediaPath).catch(() => {});
+      throw error;
+    }
+    await fsp.rm(backupPath, { force: true }).catch(() => {});
+    currentSession.recoveryRecord = await recoveryStore.updateSession(currentSession.id, {
+      state: 'ready',
+      failureStage: null,
+      failureCode: null
+    });
+    currentSession.status = 'ready';
+  } catch (error) {
+    if (!fs.existsSync(mediaPath) && fs.existsSync(backupPath)) {
+      await fsp.rename(backupPath, mediaPath).catch(() => {});
+    }
+    if (currentSession.cancelRequested) {
+      await recoveryStore.updateSession(currentSession.id, {
+        state: replacementComplete ? 'ready' : 'interrupted-recording',
+        failureStage: null,
+        failureCode: null
+      }).catch(() => {});
+      throw new Error('La recuperación se detuvo y el original se conservó para continuar después.');
+    }
+    await recoveryStore.updateSession(currentSession.id, replacementComplete
+      ? { state: 'ready', failureStage: null, failureCode: null }
+      : { state: 'unrecoverable', failureStage: 'recovery', failureCode: 'source-invalid' }).catch(() => {});
+    if (replacementComplete) {
+      currentSession.status = 'ready';
+      throw new Error(`El video se recuperó, pero no se pudo actualizar su registro: ${error.message}`);
+    }
+    throw new Error(`No se pudo recuperar este video parcial. El archivo original se conservó: ${error.message}`);
+  } finally {
+    await fsp.rm(temporaryPath, { force: true }).catch(() => {});
+  }
+}
+
+async function continueRecovery(id, format, ownerWindow) {
+  if (!['webm', 'mp4', 'mkv', 'gif'].includes(format)) throw new Error('El formato de salida seleccionado no está permitido.');
+  if (activeSavePromise) throw new Error('Ya se está guardando otra grabación. Inténtalo cuando termine.');
+  if (recordingSession) throw new Error('Termina o conserva primero la grabación que está abierta en la ventana principal.');
+  const previousProgressOwner = recoverySaveOwner;
+  recoverySaveOwner = ownerWindow;
+  const operation = (async () => {
+    const currentSession = await loadRecoveryRecording(id);
+    if (currentSession.status === 'unrecoverable') throw new Error('Esta grabación no se pudo recuperar.');
+    recordingSession = currentSession;
+    currentSession.status = 'saving';
+    try {
+      await repairInterruptedRecording(currentSession);
+      assertSaveSessionActive(currentSession);
+      if (currentSession.hasAudio === null) currentSession.hasAudio = false;
+      // Any saved processing state resumes the pipeline from the original video.
+      currentSession.status = 'ready';
+      const result = await saveRecordingCore(id, format, ownerWindow, currentSession);
+      if (result.status === 'cancelled' && recordingSession === currentSession) recordingSession = null;
+      return result;
+    } catch (error) {
+      if (recordingSession === currentSession) recordingSession = null;
+      throw error;
+    }
+  })();
+  activeSavePromise = operation;
+  try {
+    return await operation;
+  } finally {
+    if (activeSavePromise === operation) activeSavePromise = null;
+    recoverySaveOwner = previousProgressOwner;
+    await notifyRecoverySessionsChanged();
+  }
+}
+
+async function saveRecording(id, format, ownerWindow = mainWindow, suppliedSession = null) {
+  if (activeSavePromise) throw new Error('Ya se está guardando otra grabación. Inténtalo cuando termine.');
+  const previousProgressOwner = recoverySaveOwner;
+  recoverySaveOwner = ownerWindow;
+  const operation = saveRecordingCore(id, format, ownerWindow, suppliedSession);
+  activeSavePromise = operation;
+  try {
+    return await operation;
+  } finally {
+    if (activeSavePromise === operation) activeSavePromise = null;
+    recoverySaveOwner = previousProgressOwner;
+  }
+}
+
+async function saveRecordingCore(id, format, ownerWindow, suppliedSession) {
+  const currentSession = suppliedSession || recordingSession;
+  if (!currentSession || currentSession.id !== id || currentSession.status !== 'ready') {
     throw new Error('La grabación ya no está disponible para guardar.');
   }
   if (!['webm', 'mp4', 'mkv', 'gif'].includes(format)) throw new Error('El formato de salida seleccionado no está permitido.');
 
   const label = { webm: 'WebM', mp4: 'MP4', mkv: 'MKV', gif: 'GIF' }[format];
-  const currentSession = recordingSession;
   const sourceName = safeCaptureFileName(currentSession.sourceName);
   const defaultName = `${sourceName}-${new Date().toISOString().replace(/[:.]/g, '-')}.${format}`;
-  const saveDirectory = await getSaveDirectoryStatus();
+  currentSession.status = 'saving';
+  let saveDirectory;
+  try {
+    saveDirectory = await getSaveDirectoryStatus();
+  } catch (error) {
+    currentSession.status = 'ready';
+    throw error;
+  }
   let overwriteConfirmed = false;
   let targetPath;
   if (saveDirectory.directory) {
     if (!saveDirectory.available) {
+      currentSession.status = 'ready';
       throw new Error('La carpeta predeterminada ya no está disponible. Elige otra en Preferencias / Configuración o restablécela.');
     }
     targetPath = chooseUniqueMediaPath(path.join(saveDirectory.directory, defaultName), (candidate) => fs.existsSync(candidate) || fs.existsSync(getSubtitlePath(candidate)));
   } else {
-    const { filePath: chosenPath } = await dialog.showSaveDialog(mainWindow, {
+    const { filePath: chosenPath } = await dialog.showSaveDialog(ownerWindow || mainWindow, {
       defaultPath: path.join(app.getPath('videos'), defaultName),
       filters: [{ name: `${label} (${format.toUpperCase()})`, extensions: [format] }],
       properties: ['showOverwriteConfirmation']
     });
-    if (!chosenPath) return { status: 'cancelled' };
+    if (!chosenPath) {
+      currentSession.status = 'ready';
+      return { status: 'cancelled' };
+    }
     targetPath = path.extname(chosenPath).toLowerCase() === `.${format}` ? chosenPath : `${chosenPath}.${format}`;
     overwriteConfirmed = fs.existsSync(targetPath);
   }
   let temporaryOutput = null;
   let temporarySubtitle = null;
   let stage = 'transcription';
-  currentSession.status = 'saving';
   try {
     let subtitlePath = null;
-    if (currentSession.hasAudio) subtitlePath = await ensureSessionTranscript(currentSession);
+    if (currentSession.hasAudio) {
+      await setRecoverySessionState(currentSession, 'transcribing');
+      subtitlePath = await ensureSessionTranscript(currentSession);
+    }
     assertSaveSessionActive(currentSession);
 
     if (currentSession.hasAudio && !overwriteConfirmed) targetPath = chooseAvailableMediaPath(targetPath);
     const subtitleTargetPath = currentSession.hasAudio ? getSubtitlePath(targetPath) : null;
 
-    notifySaveProgress('finalizing');
     temporaryOutput = path.join(path.dirname(targetPath), `.${path.parse(targetPath).name}-${id}.partial.${format}`);
     currentSession.temporaryOutput = temporaryOutput;
     stage = format === 'webm' ? 'finalizing' : 'conversion';
+    await setRecoverySessionState(currentSession, stage === 'conversion' ? 'converting' : 'finalizing');
+    if (stage === 'conversion') notifySaveProgress('conversion');
     if (format === 'webm') await fsp.copyFile(currentSession.filePath, temporaryOutput);
     else await runFfmpeg(currentSession.filePath, temporaryOutput, format, currentSession.hasAudio);
     assertSaveSessionActive(currentSession);
 
     stage = 'finalizing';
+    await setRecoverySessionState(currentSession, 'finalizing');
+    notifySaveProgress('finalizing');
     if ((await fsp.stat(temporaryOutput)).size === 0) throw new Error('La salida generada está vacía.');
     const outputs = [{ temporaryPath: temporaryOutput, targetPath }];
     if (subtitlePath) {
@@ -997,9 +1315,14 @@ async function saveRecording(id, format) {
       outputs.push({ temporaryPath: temporarySubtitle, targetPath: subtitleTargetPath });
     }
     await commitOutputPair(outputs, currentSession, overwriteConfirmed);
-    await fsp.rm(currentSession.filePath, { force: true }).catch(() => {});
+    if (currentSession.recoveryManaged && recoveryStore) {
+      await recoveryStore.removeSession(currentSession.id);
+    } else {
+      await fsp.rm(currentSession.filePath, { force: true }).catch(() => {});
+    }
     if (currentSession.subtitleTempPath) await fsp.rm(path.dirname(currentSession.subtitleTempPath), { recursive: true, force: true }).catch(() => {});
     recordingSession = null;
+    await notifyRecoverySessionsChanged();
     return { status: 'saved', path: targetPath, subtitlePath: subtitlePath ? subtitleTargetPath : null };
   } catch (error) {
     if (temporaryOutput) await fsp.rm(temporaryOutput, { force: true }).catch(() => {});
@@ -1008,6 +1331,18 @@ async function saveRecording(id, format) {
       currentSession.temporaryOutput = null;
       currentSession.temporarySubtitle = null;
       currentSession.status = 'ready';
+      const failureStage = stage === 'transcription' ? 'transcription' : stage === 'conversion' ? 'conversion' : 'finalizing';
+      const failureCode = stage === 'transcription'
+        ? 'transcription-failed'
+        : stage === 'conversion'
+          ? 'conversion-failed'
+          : 'finalization-failed';
+      await setRecoverySessionState(currentSession, 'failed', failureStage, failureCode).catch(() => {});
+      currentSession.status = 'ready';
+      if (ownerWindow && ownerWindow !== mainWindow) {
+        recordingSession = null;
+        await notifyRecoverySessionsChanged();
+      }
     }
     if (stage === 'transcription') return { status: 'transcription-failed', message: error.message, canSaveWebm: true };
     if (stage === 'conversion') return { status: 'conversion-failed', message: error.message, canSaveWebm: true };
@@ -1110,10 +1445,42 @@ async function discardCurrentSession() {
   });
   currentSession.stream.destroy();
   await closed;
-  await fsp.rm(currentSession.filePath, { force: true }).catch(() => {});
+  if (currentSession.recoveryManaged && recoveryStore) {
+    await recoveryStore.removeSession(currentSession.id).catch(() => {});
+  } else {
+    await fsp.rm(currentSession.filePath, { force: true }).catch(() => {});
+  }
   if (currentSession.temporaryOutput) await fsp.rm(currentSession.temporaryOutput, { force: true }).catch(() => {});
   if (currentSession.temporarySubtitle) await fsp.rm(currentSession.temporarySubtitle, { force: true }).catch(() => {});
   if (currentSession.subtitleTempPath) await fsp.rm(path.dirname(currentSession.subtitleTempPath), { recursive: true, force: true }).catch(() => {});
+}
+
+async function preserveCurrentSession(id, failureCode = 'capture-write-failed') {
+  const currentSession = recordingSession;
+  if (!currentSession || currentSession.id !== id) return false;
+  currentSession.status = 'preserving';
+  await currentSession.writeChain.catch(() => {});
+  if (currentSession.stream && !currentSession.stream.closed) {
+    if (currentSession.writeError) {
+      const closed = new Promise((resolve) => currentSession.stream.once('close', resolve));
+      currentSession.stream.destroy();
+      await closed;
+    } else {
+      await new Promise((resolve) => {
+        currentSession.stream.once('error', resolve);
+        currentSession.stream.end(resolve);
+      });
+    }
+  }
+  if (currentSession.recoveryManaged && recoveryStore) {
+    await recoveryStore.updateSession(id, {
+      state: 'interrupted-recording',
+      failureStage: 'capture',
+      failureCode
+    }).catch(() => {});
+  }
+  recordingSession = null;
+  return true;
 }
 
 function registerIpcHandlers() {
@@ -1156,6 +1523,29 @@ function registerIpcHandlers() {
       }
     } else if (action === 'close') mainWindow.close();
     else throw new Error('La acción de ventana solicitada no es válida.');
+  });
+  registerHandler('get-recovery-sessions-main', getRecoverySummaries);
+  registerHandler('open-recovery-window', async () => {
+    openRecoveryWindow();
+    return { status: 'opened' };
+  });
+  registerHandler('recording-preserved-for-exit', async (id) => {
+    const record = recoveryStore ? await recoveryStore.getSession(id) : null;
+    const currentReady = recordingSession?.id === id && recordingSession.status === 'ready';
+    const alreadyPreserved = !recordingSession
+      && record
+      && ['ready', 'interrupted-recording'].includes(record.state);
+    if (!currentReady && !alreadyPreserved) {
+      throw new Error('La grabación no terminó de prepararse para recuperarla.');
+    }
+    if (preserveRecordingForExitResolve) {
+      if (preserveRecordingForExitTimer) clearTimeout(preserveRecordingForExitTimer);
+      preserveRecordingForExitTimer = null;
+      const resolve = preserveRecordingForExitResolve;
+      preserveRecordingForExitResolve = null;
+      resolve(true);
+    }
+    return { status: 'preserved' };
   });
   registerHandler('set-compact-settings-open', async (expanded, requestedHeight) => {
     if (typeof expanded !== 'boolean') throw new Error('El estado de ajustes compactos no es válido.');
@@ -1204,11 +1594,12 @@ function registerIpcHandlers() {
     return { systemAudioAvailable: process.platform === 'win32' };
   });
 
-  registerHandler('begin-recording', async () => {
+  registerHandler('begin-recording', async (hasAudio) => {
     if (!await getSourceById(selectedCapture.source?.id)) {
       throw new Error('La fuente seleccionada ya no está disponible. Actualiza las fuentes e inténtalo de nuevo.');
     }
-    return createRecordingSession();
+    if (typeof hasAudio !== 'boolean') throw new Error('La configuración de audio de la grabación no es válida.');
+    return createRecordingSession(hasAudio);
   });
   registerHandler('get-capture-failure', async () => {
     const message = lastCaptureFailure;
@@ -1226,39 +1617,62 @@ function registerIpcHandlers() {
       throw new Error('La sesión de grabación no puede finalizarse.');
     }
     try {
-      await closeRecordingStream(recordingSession);
       recordingSession.hasAudio = hasAudio;
+      await closeRecordingStream(recordingSession);
+      recordingSession.status = 'ready';
+      recordingSession.recoveryRecord = await recoveryStore.updateSession(id, {
+        state: 'ready',
+        hasAudio,
+        failureStage: null,
+        failureCode: null
+      });
       return { status: 'ready' };
     } catch (error) {
-      await discardCurrentSession();
-      throw new Error(`No se pudo completar la grabación: ${error.message}`);
+      await preserveCurrentSession(id, 'capture-write-failed');
+      await notifyRecoverySessionsChanged();
+      throw new Error(`La captura quedó como archivo recuperable, pero no se pudo finalizar: ${error.message}`);
     }
   });
-  registerHandler('save-recording', saveRecording);
+  registerHandler('save-recording', async (id, format) => saveRecording(id, format, mainWindow));
   registerHandler('save-image', saveImage);
   registerHandler('discard-recording', async (id) => {
     if (!recordingSession || recordingSession.id !== id || recordingSession.status !== 'ready') {
       throw new Error('La grabación pendiente ya no está disponible.');
     }
     await discardCurrentSession();
+    await notifyRecoverySessionsChanged();
     return { status: 'discarded' };
   });
   registerHandler('abort-recording', async (id) => {
     if (!recordingSession || recordingSession.id !== id || !['recording', 'ready'].includes(recordingSession.status)) {
       throw new Error('La sesión de grabación ya no está disponible.');
     }
-    await discardCurrentSession();
+    await preserveCurrentSession(id);
+    await notifyRecoverySessionsChanged();
+    return { status: 'preserved' };
+  });
+
+  registerRecoveryHandler('get-recovery-sessions-window', async () => getRecoverySummaries());
+  registerRecoveryHandler('continue-recovery', async (id, format, ownerWindow) => continueRecovery(id, format, ownerWindow));
+  registerRecoveryHandler('discard-recovery', async (id) => {
+    if (!recoveryStore) throw new Error('El sistema de recuperación todavía no está listo.');
+    if (recordingSession?.id === id) throw new Error('No se puede descartar una sesión que está activa.');
+    const removed = await recoveryStore.removeSession(id);
+    if (!removed) throw new Error('La sesión de recuperación ya no está disponible.');
+    await notifyRecoverySessionsChanged();
     return { status: 'discarded' };
   });
 }
 
 app.whenReady().then(() => {
   migrateWindowsLoginItem();
+  recoveryStore = createRecoveryStore({ userDataPath: app.getPath('userData') });
   Menu.setApplicationMenu(null);
   createTray();
   makeWindow();
   configureCaptureHandler();
   registerIpcHandlers();
+  getRecoverySummaries().then((sessions) => refreshTrayMenu(sessions.length)).catch(() => {});
   globalShortcut.register('CommandOrControl+Shift+M', toggleCompactModeFromShortcut);
 });
 
@@ -1266,8 +1680,65 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
 
-app.on('before-quit', () => {
+function cleanupAppForQuit() {
   globalShortcut.unregisterAll();
   if (tray) tray.destroy();
-  if (recordingSession) discardCurrentSession();
+}
+
+async function retainSessionBeforeQuit() {
+  const currentSession = recordingSession;
+  if (!currentSession) return;
+  if (currentSession.status === 'recording') {
+    const preserved = await new Promise((resolve) => {
+      preserveRecordingForExitResolve = resolve;
+      preserveRecordingForExitTimer = setTimeout(() => {
+        preserveRecordingForExitTimer = null;
+        preserveRecordingForExitResolve = null;
+        resolve(false);
+      }, 10000);
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('preserve-recording-for-exit', currentSession.id);
+      } else {
+        if (preserveRecordingForExitTimer) clearTimeout(preserveRecordingForExitTimer);
+        preserveRecordingForExitTimer = null;
+        preserveRecordingForExitResolve = null;
+        resolve(false);
+      }
+    });
+    if (!preserved && recordingSession?.id === currentSession.id) {
+      await preserveCurrentSession(currentSession.id);
+    }
+    return;
+  }
+  if (currentSession.status === 'saving') {
+    currentSession.cancelRequested = true;
+    if (downloadRequest) {
+      downloadRequest.destroy(new Error('El guardado se reanudará desde la recuperación.'));
+      downloadRequest = null;
+    }
+    if (activeChildProcess && !activeChildProcess.killed) activeChildProcess.kill();
+    await activeSavePromise?.catch(() => {});
+  }
+  if (recordingSession === currentSession) recordingSession = null;
+}
+
+app.on('before-quit', (event) => {
+  if (allowQuitAfterPreservation) {
+    cleanupAppForQuit();
+    return;
+  }
+  event.preventDefault();
+  if (isPreparingQuit) return;
+  isPreparingQuit = true;
+  void (async () => {
+    try {
+      await retainSessionBeforeQuit();
+    } catch {
+      // Preserve the process exit even if the last recovery metadata write fails.
+    } finally {
+      cleanupAppForQuit();
+      allowQuitAfterPreservation = true;
+      app.quit();
+    }
+  })();
 });

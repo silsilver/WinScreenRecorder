@@ -2,7 +2,7 @@
 
 Fecha: 2026-10-15
 Proyecto: WinScreen Recorder
-Estado: Diseño aprobado por el usuario; pendiente revisión de la especificación
+Estado: Especificación revisada y aprobada por el usuario
 
 ## Objetivo
 
@@ -21,6 +21,7 @@ Conservar las capturas que se interrumpan durante la grabación, el guardado o l
 
 1. Durante la grabación, cada fragmento recibido se agrega al WebM parcial propio de esa sesión. Una interrupción no incorpora datos de una grabación previa.
 2. Al iniciar la aplicación o volver a su ventana principal, detectar las sesiones no terminadas. Mostrar un aviso destacado con un botón, por ejemplo, **“Hay grabaciones por recuperar — Revisar”**.
+   Si la aplicación inicia oculta en el área de notificación de Windows, incluir también una entrada visible de recuperación en el menú del icono.
 3. El botón abre una ventana independiente que lista cada sesión con fecha, estado y acciones disponibles.
 4. Para una captura interrumpida mientras grababa, intentar validar y recuperar el WebM parcial; indicar claramente si el archivo puede recuperarse o si quedó dañado.
 5. Para una captura ya finalizada que se interrumpió durante guardado o transcripción, ofrecer continuar el guardado. Si había audio y la transcripción no terminó, volver a transcribir desde el comienzo usando el original conservado. No prometer reanudar Whisper en un punto interno.

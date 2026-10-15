@@ -39,7 +39,6 @@
     compactExpand: document.getElementById('compact-expand'),
     developerInfoButton: document.getElementById('developer-info-button'),
     aboutInfoButton: document.getElementById('about-info-button'),
-    keyboardHelpButton: document.getElementById('keyboard-help-button'),
     developerDialog: document.getElementById('developer-dialog'),
     closeDeveloperDialog: document.getElementById('close-developer-dialog'),
     developerName: document.getElementById('developer-name'),
@@ -295,7 +294,7 @@
         microphone: [elements.microphone, elements.compactMicrophone],
         'system-audio': [elements.systemAudio, elements.compactSystemAudio],
         recovery: [elements.openRecoveryWindow, elements.compactRecoveries],
-        about: [elements.aboutInfoButton], help: [elements.keyboardHelpButton], compact: [elements.compactToggle, elements.compactExpand]
+        about: [elements.aboutInfoButton], compact: [elements.compactToggle, elements.compactExpand]
       };
       for (const shortcut of shortcuts) {
         for (const control of controls[shortcut.action] || []) {
@@ -1454,7 +1453,6 @@
       setStatus(`No se pudo abrir la información de la aplicación: ${error.message}`);
     });
   });
-  elements.keyboardHelpButton.addEventListener('click', () => runKeyboardAction('help'));
   elements.developerInfoButton.addEventListener('click', async () => {
     try {
       if (!state.developerInfo) state.developerInfo = await window.electronAPI.getDeveloperInfo();

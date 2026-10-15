@@ -1,5 +1,11 @@
 # Cambios
 
+## 1.3.1 — 2026-10-15
+
+### Cambiado
+
+- La ayuda de **Atajos de teclado** se consulta dentro de **Acerca de la aplicación**. Se elimina el botón independiente del pie de la ventana para evitar accesos duplicados; **F1** abre directamente la sección de atajos.
+
 ## 1.3.0 — 2026-10-15
 
 ### Añadido

@@ -3,7 +3,8 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('electronAPI', {
   getSources: () => ipcRenderer.invoke('get-sources'),
   getDeveloperInfo: () => ipcRenderer.invoke('get-developer-info'),
-  openAboutWindow: () => ipcRenderer.invoke('open-about-window'),
+  openAboutWindow: (section) => ipcRenderer.invoke('open-about-window', section),
+  getKeyboardShortcuts: () => ipcRenderer.invoke('get-keyboard-shortcuts'),
   getSaveDirectory: () => ipcRenderer.invoke('get-save-directory'),
   chooseSaveDirectory: () => ipcRenderer.invoke('choose-save-directory'),
   resetSaveDirectory: () => ipcRenderer.invoke('reset-save-directory'),

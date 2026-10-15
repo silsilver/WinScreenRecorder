@@ -12,6 +12,8 @@ const { fileURLToPath } = require('node:url');
 const { allowMicrophoneRequest } = require('./src/permission-policy');
 const { createRecoveryStore } = require('./src/recording-recovery');
 const { isValidTrayCaptureState, getTrayStatusLabel } = require('./src/tray-status');
+const { shortcuts: keyboardShortcuts } = require('./src/keyboard-shortcuts');
+const { configureAppLifecycle } = require('./src/app-lifecycle');
 const { chooseUniqueMediaPath } = require('./src/save-paths');
 const { mapRegionToBounds } = require('./src/region-geometry');
 const { mapPhysicalRectToDisplay } = require('./src/window-geometry');
@@ -63,6 +65,10 @@ let verifiedModelIdentity = null;
 let lastCaptureFailure = null;
 let closePromptOpen = false;
 let allowWindowClose = false;
+let choosingSaveDirectory = false;
+let showAfterStartup = false;
+let updateExitRequested = false;
+const registeredKeyboardShortcuts = new Map();
 
 const modelConfig = {
   filename: 'ggml-base-q5_1.bin',
@@ -126,8 +132,16 @@ function getAppInformation() {
     name: productName || app.getName(),
     version: app.getVersion(),
     developer: author.name,
-    email: author.email
+    email: author.email,
+    shortcuts: getKeyboardShortcutInfo()
   };
+}
+
+function getKeyboardShortcutInfo() {
+  return keyboardShortcuts.map(({ action, label, binding, scope }) => ({
+    action, label, binding, scope,
+    registered: scope === 'global' ? registeredKeyboardShortcuts.get(action) === true : null
+  }));
 }
 
 function getLoginItemIdentity() {
@@ -670,7 +684,7 @@ function makeWindow() {
     }
   });
   mainWindow.once('ready-to-show', () => {
-    if (startedFromWindowsLogin) mainWindow.hide();
+    if (startedFromWindowsLogin && !showAfterStartup) mainWindow.hide();
     else mainWindow.show();
   });
   mainWindow.loadFile(rendererPath);
@@ -731,11 +745,17 @@ function openRecoveryWindow() {
   recoveryWindow.loadFile(recoveryRendererPath);
 }
 
-function openAboutWindow() {
+function openAboutWindow(section = 'overview') {
+  const sectionIds = { overview: '', keyboard: 'keyboard-shortcuts', installation: 'installation' };
+  if (!Object.hasOwn(sectionIds, section)) throw new Error('La sección de información no es válida.');
   if (aboutWindow && !aboutWindow.isDestroyed()) {
     if (aboutWindow.isMinimized()) aboutWindow.restore();
     aboutWindow.show();
     aboutWindow.focus();
+    const currentWindow = aboutWindow;
+    const showSection = () => { if (!currentWindow.isDestroyed()) currentWindow.webContents.send('show-about-section', sectionIds[section]); };
+    if (currentWindow.webContents.isLoading()) currentWindow.webContents.once('did-finish-load', showSection);
+    else showSection();
     return;
   }
   const window = new BrowserWindow({
@@ -769,7 +789,34 @@ function openAboutWindow() {
     if (!window.isDestroyed()) window.show();
   });
   window.on('closed', () => { if (aboutWindow === window) aboutWindow = null; });
-  window.loadFile(aboutRendererPath);
+  window.loadFile(aboutRendererPath, { hash: sectionIds[section] });
+}
+
+function dispatchCaptureShortcut(action) {
+  if (!['capture-start', 'capture-stop'].includes(action) || choosingSaveDirectory || closePromptOpen || isPreparingQuit || updateExitRequested) return;
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  const script = `document.dispatchEvent(new CustomEvent('recorder-keyboard-action', { detail: ${JSON.stringify(action)} }));`;
+  const dispatch = () => {
+    if (!mainWindow || mainWindow.isDestroyed() || choosingSaveDirectory || closePromptOpen || isPreparingQuit || updateExitRequested) return;
+    mainWindow.webContents.executeJavaScript(script, true).catch(() => showMainWindow());
+  };
+  if (mainWindow.webContents.isLoading()) mainWindow.webContents.once('did-finish-load', dispatch);
+  else dispatch();
+}
+
+function registerKeyboardShortcuts() {
+  for (const shortcut of keyboardShortcuts.filter((item) => item.scope === 'global')) {
+    const callback = () => {
+      if (choosingSaveDirectory || closePromptOpen || isPreparingQuit || updateExitRequested) return;
+      if (shortcut.action === 'show-window') showMainWindow();
+      else if (shortcut.action === 'compact') toggleCompactModeFromShortcut();
+      else dispatchCaptureShortcut(shortcut.action);
+    };
+    let registered = false;
+    try { registered = globalShortcut.register(shortcut.accelerator, callback); } catch {}
+    registeredKeyboardShortcuts.set(shortcut.action, registered);
+    if (!registered) console.warn(`Atajo global no disponible: ${shortcut.binding}`);
+  }
 }
 
 function restoreFullWindowState() {
@@ -1588,10 +1635,11 @@ async function preserveCurrentSession(id, failureCode = 'capture-write-failed') 
 
 function registerIpcHandlers() {
   registerHandler('get-developer-info', getAppInformation);
-  registerHandler('open-about-window', async () => {
-    openAboutWindow();
+  registerHandler('open-about-window', async (section = 'overview') => {
+    openAboutWindow(section);
     return { status: 'opened' };
   });
+  registerHandler('get-keyboard-shortcuts', getKeyboardShortcutInfo);
   ipcMain.handle('get-app-info', async (event) => {
     if (!isTrustedAboutRenderer(event)) throw new Error('Solicitud de información rechazada: origen no confiable.');
     return getAppInformation();
@@ -1604,7 +1652,11 @@ function registerIpcHandlers() {
     return { status: 'updated' };
   });
   registerHandler('get-save-directory', getSaveDirectoryStatus);
-  registerHandler('choose-save-directory', chooseSaveDirectory);
+  registerHandler('choose-save-directory', async () => {
+    if (choosingSaveDirectory) throw new Error('Ya hay una selección de carpeta abierta.');
+    choosingSaveDirectory = true;
+    try { return await chooseSaveDirectory(); } finally { choosingSaveDirectory = false; }
+  });
   registerHandler('reset-save-directory', resetSaveDirectory);
   registerHandler('get-start-with-windows', async () => ({
     enabled: app.getLoginItemSettings(getLoginItemIdentity()).openAtLogin
@@ -1620,7 +1672,8 @@ function registerIpcHandlers() {
     return setWindowMode(compact);
   });
   registerHandler('window-action', async (action) => {
-    if (action === 'minimize') mainWindow.minimize();
+    if (action === 'show') showMainWindow();
+    else if (action === 'minimize') mainWindow.minimize();
     else if (action === 'toggle-maximize') {
       if (mainWindow.isMaximized() || windowMaximized) {
         mainWindow.unmaximize();
@@ -1775,7 +1828,21 @@ function registerIpcHandlers() {
   });
 }
 
-app.whenReady().then(() => {
+const shouldStartApplication = configureAppLifecycle({
+  app,
+  onSecondLaunch: () => {
+    if (isPreparingQuit || updateExitRequested) return;
+    showAfterStartup = true;
+    showMainWindow();
+  },
+  onUpdateRequest: () => {
+    updateExitRequested = true;
+    app.whenReady().then(() => app.quit());
+  }
+});
+
+if (shouldStartApplication) app.whenReady().then(() => {
+  if (updateExitRequested) { app.quit(); return; }
   migrateWindowsLoginItem();
   recoveryStore = createRecoveryStore({ userDataPath: app.getPath('userData') });
   Menu.setApplicationMenu(null);
@@ -1784,7 +1851,7 @@ app.whenReady().then(() => {
   configureCaptureHandler();
   registerIpcHandlers();
   getRecoverySummaries().then((sessions) => refreshTrayMenu(sessions.length)).catch(() => {});
-  globalShortcut.register('CommandOrControl+Shift+M', toggleCompactModeFromShortcut);
+  registerKeyboardShortcuts();
 });
 
 app.on('window-all-closed', () => {
@@ -1848,6 +1915,7 @@ app.on('before-quit', (event) => {
       // Preserve the process exit even if the last recovery metadata write fails.
     } finally {
       cleanupAppForQuit();
+      allowWindowClose = true;
       allowQuitAfterPreservation = true;
       app.quit();
     }

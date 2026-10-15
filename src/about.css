@@ -49,6 +49,11 @@ td { color: var(--muted); }
 .app-details dt { color: #8ea1bc; font-size: 12px; }
 .app-details dd { overflow-wrap: anywhere; margin: 0; color: var(--text); }
 .info-error { margin-top: 16px; padding: 12px; border: 1px solid rgba(251, 113, 133, .35); color: #ffb0bc; }
+.shortcut-table th:first-child { width: 148px; }
+.shortcut-table th:last-child { width: 132px; }
+.shortcut-table td + td { padding-left: 12px; }
+.keyboard-note { margin-top: 14px; }
+section h2:focus { outline: none; }
 .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 @media (max-width: 720px) {
   .about-shell { padding: 24px; }

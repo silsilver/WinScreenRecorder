@@ -212,5 +212,16 @@
     status.hidden = false;
   });
   window.recoveryAPI.onSessionsChanged(refreshSessions);
+  document.addEventListener('keydown', (event) => {
+    const shortcut = window.recorderKeyboard.findShortcut(event, { scope: 'recovery' });
+    if (shortcut?.action === 'refresh-recovery') {
+      event.preventDefault();
+      if (busyId === null) refreshSessions();
+    } else if (!event.repeat && !event.altKey && !event.shiftKey
+      && ((event.key === 'Escape' && !event.ctrlKey && !event.metaKey) || (event.ctrlKey && !event.metaKey && event.key.toLowerCase() === 'w'))) {
+      event.preventDefault();
+      window.close();
+    }
+  });
   refreshSessions();
 })();

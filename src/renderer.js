@@ -39,6 +39,7 @@
     compactExpand: document.getElementById('compact-expand'),
     developerInfoButton: document.getElementById('developer-info-button'),
     aboutInfoButton: document.getElementById('about-info-button'),
+    keyboardHelpButton: document.getElementById('keyboard-help-button'),
     developerDialog: document.getElementById('developer-dialog'),
     closeDeveloperDialog: document.getElementById('close-developer-dialog'),
     developerName: document.getElementById('developer-name'),
@@ -116,6 +117,7 @@
   };
 
   const busyPhases = new Set(['loading', 'preparing', 'selecting-region', 'countdown', 'capturing-image', 'recording', 'finalizing', 'saving']);
+  let registeredGlobalShortcuts = new Set(window.recorderKeyboard.shortcuts.filter((item) => item.scope === 'global').map((item) => item.action));
   const compactPreferenceKey = 'winscreen-recorder-compact';
   const videoFormats = [
     ['mp4', 'MP4 · H.264'], ['mkv', 'MKV · H.264'], ['webm', 'WebM · VP9 / VP8'], ['gif', 'GIF animado']
@@ -220,6 +222,113 @@
     try { enabled = window.localStorage.getItem(compactPreferenceKey) === 'true'; } catch {}
     if (enabled) await setCompactMode(true, false);
   }
+
+  function clickKeyboardControl(control) {
+    if (!control || control.disabled) return false;
+    control.click();
+    return true;
+  }
+
+  function runKeyboardAction(action) {
+    if (action === 'capture-stop') {
+      if (state.phase === 'recording') return clickKeyboardControl(elements.stop);
+      if (state.phase === 'countdown') return clickKeyboardControl(elements.cancelCountdown);
+      return false;
+    }
+    const dialog = document.querySelector('dialog[open]');
+    if (dialog && !['help', 'about', 'cancel'].includes(action)) return false;
+    switch (action) {
+      case 'capture-start':
+        if (state.phase === 'idle' && !elements.start.disabled) return clickKeyboardControl(elements.start);
+        if (state.phase === 'ready' || state.phase === 'idle') {
+          window.electronAPI.windowAction('show').catch(() => {});
+          setStatus(state.phase === 'ready' ? 'Guarda o descarta primero la captura pendiente' : 'Selecciona una pantalla o ventana para capturar');
+        }
+        return false;
+      case 'show-window': window.electronAPI.windowAction('show').catch(() => {}); return true;
+      case 'compact': setCompactMode(!document.body.classList.contains('compact-mode')); return true;
+      case 'help': window.electronAPI.openAboutWindow('keyboard').catch((error) => setStatus(error.message)); return true;
+      case 'about': return clickKeyboardControl(elements.aboutInfoButton);
+      case 'recovery': return clickKeyboardControl(elements.openRecoveryWindow);
+      case 'save': return state.phase === 'ready' && clickKeyboardControl(elements.saveWebm.hidden ? elements.save : elements.saveWebm);
+      case 'refresh-sources': return clickKeyboardControl(elements.refresh);
+      case 'select-region': return clickKeyboardControl(elements.selectRegion);
+      case 'microphone': return clickKeyboardControl(elements.microphone);
+      case 'system-audio': return clickKeyboardControl(elements.systemAudio);
+      case 'focus-sources': {
+        if (busyPhases.has(state.phase) || state.phase === 'ready') return false;
+        const control = document.body.classList.contains('compact-mode') ? elements.compactSource
+          : elements.sourceGrid.querySelector('button.source-card.is-selected:not(:disabled)') || elements.sourceGrid.querySelector('button.source-card:not(:disabled)');
+        control?.focus();
+        return Boolean(control);
+      }
+      case 'configuration':
+        if (busyPhases.has(state.phase) || state.phase === 'ready') return false;
+        if (document.body.classList.contains('compact-mode')) {
+          elements.compactSettings.open = true;
+          window.requestAnimationFrame(() => elements.compactFormat.focus());
+        } else elements.format.focus();
+        return true;
+      case 'cancel':
+        if (dialog) { dialog.close(); return true; }
+        if (state.phase === 'countdown') return clickKeyboardControl(elements.cancelCountdown);
+        if (elements.compactSettings.open) {
+          elements.compactSettings.open = false;
+          elements.compactSettings.querySelector('summary').focus();
+          return true;
+        }
+        return false;
+      default: return false;
+    }
+  }
+
+  async function loadKeyboardShortcuts() {
+    try {
+      const shortcuts = await window.electronAPI.getKeyboardShortcuts();
+      registeredGlobalShortcuts = new Set(shortcuts.filter((item) => item.scope === 'global' && item.registered).map((item) => item.action));
+      const controls = {
+        'capture-start': [elements.start, elements.compactStart],
+        'capture-stop': [elements.stop, elements.compactStop],
+        save: [elements.save, elements.saveWebm, elements.compactSave],
+        'refresh-sources': [elements.refresh, elements.compactRefresh],
+        'select-region': [elements.selectRegion, elements.compactSelectRegion],
+        microphone: [elements.microphone, elements.compactMicrophone],
+        'system-audio': [elements.systemAudio, elements.compactSystemAudio],
+        recovery: [elements.openRecoveryWindow, elements.compactRecoveries],
+        about: [elements.aboutInfoButton], help: [elements.keyboardHelpButton], compact: [elements.compactToggle, elements.compactExpand]
+      };
+      for (const shortcut of shortcuts) {
+        for (const control of controls[shortcut.action] || []) {
+          control.title = `${shortcut.label} (${shortcut.binding})`;
+          control.setAttribute('aria-keyshortcuts', shortcut.binding.replace(/Ctrl/g, 'Control').replace(/\s/g, ''));
+        }
+      }
+    } catch {
+      // Capture controls remain available when shortcut metadata cannot be read.
+    }
+  }
+
+  document.addEventListener('recorder-keyboard-action', (event) => {
+    if (['capture-start', 'capture-stop'].includes(event.detail)) runKeyboardAction(event.detail);
+  });
+  document.addEventListener('keydown', (event) => {
+    const shortcut = window.recorderKeyboard.findShortcut(event, { registeredGlobals: registeredGlobalShortcuts });
+    if (shortcut) {
+      event.preventDefault();
+      runKeyboardAction(shortcut.action);
+      return;
+    }
+    if (event.repeat || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey || document.querySelector('dialog[open]')) return;
+    const card = event.target.closest?.('button.source-card:not(:disabled)');
+    if (!card || !elements.sourceGrid.contains(card)) return;
+    const cards = [...elements.sourceGrid.querySelectorAll('button.source-card:not(:disabled)')];
+    const index = cards.indexOf(card);
+    const columns = Math.max(1, getComputedStyle(elements.sourceGrid).gridTemplateColumns.split(' ').length);
+    const offsets = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -columns, ArrowDown: columns, Home: -index, End: cards.length - 1 - index };
+    if (!Object.hasOwn(offsets, event.key)) return;
+    event.preventDefault();
+    cards[Math.max(0, Math.min(cards.length - 1, index + offsets[event.key]))]?.focus();
+  });
 
   function setStatus(message, kind = '') {
     elements.statusText.textContent = message;
@@ -1345,6 +1454,7 @@
       setStatus(`No se pudo abrir la información de la aplicación: ${error.message}`);
     });
   });
+  elements.keyboardHelpButton.addEventListener('click', () => runKeyboardAction('help'));
   elements.developerInfoButton.addEventListener('click', async () => {
     try {
       if (!state.developerInfo) state.developerInfo = await window.electronAPI.getDeveloperInfo();
@@ -1440,6 +1550,7 @@
   setPhase('idle');
   loadSaveDirectory();
   loadStartWithWindows();
+  loadKeyboardShortcuts();
   loadSources();
   refreshRecoveryNotice();
 })();

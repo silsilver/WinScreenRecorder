@@ -1,5 +1,23 @@
 # Cambios
 
+## 1.3.0 — 2026-10-15
+
+### Añadido
+
+- **Captura mediante atajos globales.** Inicia con Ctrl+Shift+F9, detén con Ctrl+Shift+F10 y muestra la ventana con Ctrl+Shift+F11, incluso desde otra aplicación. Ctrl+Shift+M mantiene el cambio de vista compacta.
+- **Más acciones de teclado y ayuda integrada.** Guarda, actualiza fuentes, cambia audio, abre configuración, información y recuperación; F1 y el pie de la app muestran los atajos y su disponibilidad.
+- **Actualización con cierre conservando capturas.** El instalador detecta procesos en la ubicación que va a actualizar, solicita el cierre de versiones compatibles y espera antes de reemplazar archivos. Mantiene los datos y ofrece abrir la nueva versión al finalizar.
+
+### Cambiado
+
+- Una segunda ejecución activa la instancia existente en lugar de abrir otra aplicación.
+- El cierre del programa permite terminar la ventana después de conservar la sesión, también cuando lo solicita el instalador.
+
+### Limitaciones conocidas
+
+- La primera actualización desde 1.2.0 o versiones anteriores requiere salir desde la bandeja y pulsar Reintentar; esas versiones no incluyen el protocolo de cierre automático. El instalador no las termina por la fuerza.
+- Los atajos globales ocupados por otro programa funcionan únicamente con la ventana principal en primer plano y se identifican en la ayuda.
+
 ## 1.2.0 — 2026-10-15
 
 ### Añadido

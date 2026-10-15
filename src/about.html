@@ -31,6 +31,8 @@
         <a href="#transcription">Transcripción</a>
         <a href="#recovery">Guardado y recuperación</a>
         <a href="#windows">Ventana y bandeja</a>
+        <a href="#keyboard-shortcuts">Atajos de teclado</a>
+        <a href="#installation">Instalar y actualizar</a>
         <a href="#privacy">Privacidad y requisitos</a>
         <a href="#credits">Autor y componentes</a>
       </nav>
@@ -98,6 +100,30 @@
           <p>Usa la vista compacta para tener los controles en una barra pequeña. Puedes alternarla con <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>M</kbd>.</p>
           <p>Cerrar la ventana principal la oculta en el área de notificación de Windows. Desde el icono puedes volver a abrirla, consultar el estado y acceder a las grabaciones por recuperar. El texto al pasar el cursor y el menú indican si está grabando, transcribiendo, convirtiendo o guardando.</p>
           <p>Para cerrar el programa, elige <strong>Salir</strong> en el menú del icono. Si hay una captura pendiente, <strong>Conservar y salir</strong> permite continuar después. También puedes activar el inicio con Windows desde Configuración; la aplicación se inicia oculta en la bandeja.</p>
+        </section>
+
+        <section id="keyboard-shortcuts" aria-labelledby="keyboard-title">
+          <h2 id="keyboard-title">Atajos de teclado</h2>
+          <p>Los atajos globales funcionan mientras la aplicación esté abierta, incluso si usas otro programa o la ventana está oculta. Iniciar captura utiliza la fuente, el formato y el tipo de captura seleccionados; detener también cancela una cuenta atrás.</p>
+          <table class="shortcut-table">
+            <caption class="visually-hidden">Acciones de teclado y disponibilidad</caption>
+            <thead><tr><th scope="col">Atajo</th><th scope="col">Acción</th><th scope="col">Dónde funciona</th></tr></thead>
+            <tbody id="keyboard-shortcut-list"><tr><td colspan="3">Consultando atajos…</td></tr></tbody>
+          </table>
+          <p class="keyboard-note">Si otro programa ocupa un atajo global, se indica como «Ventana principal (ocupado)». En ese caso funciona con WinScreen Recorder en primer plano. Vuelve a abrir la aplicación después de liberar el atajo para intentar registrarlo otra vez.</p>
+          <p>Usa <kbd>Tab</kbd> y <kbd>Shift</kbd> + <kbd>Tab</kbd> para recorrer controles, y <kbd>Enter</kbd> o espacio para activarlos. En las tarjetas de fuentes, las flechas, Inicio y Fin mueven el foco; Enter selecciona. Los atajos locales respetan la escritura en campos de texto.</p>
+          <p><kbd>Esc</kbd> cancela la cuenta atrás o cierra ajustes y diálogos; no descarta una grabación. En las ventanas de información y recuperación, <kbd>Esc</kbd> o <kbd>Ctrl</kbd> + <kbd>W</kbd> cierran esa ventana. Las acciones no disponibles durante una captura permanecen bloqueadas.</p>
+        </section>
+
+        <section id="installation" aria-labelledby="installation-title">
+          <h2 id="installation-title">Instalar y actualizar</h2>
+          <p>Ejecuta el instalador y sigue sus pasos. Si detecta WinScreen Recorder abierto en la ubicación de instalación, solicita su cierre antes de reemplazar los archivos.</p>
+          <p>Desde la versión 1.3.0, la aplicación puede recibir esa solicitud, finalizar la captura actual y conservar sus archivos pendientes de guardado o transcripción. El instalador espera a que termine el cierre y mantiene la configuración y los datos de recuperación.</p>
+          <div class="important-note">
+            <h3>La primera actualización desde una versión anterior</h3>
+            <p>Las versiones 1.2.0 y anteriores no admiten el cierre automático. El instalador te pedirá elegir <strong>Salir</strong> desde el icono de la bandeja y después pulsar <strong>Reintentar</strong>. Si hay una captura pendiente, elige <strong>Conservar y salir</strong>.</p>
+          </div>
+          <p>Si la aplicación no puede cerrarse, puedes reintentar o cancelar; no se fuerza el cierre ni se reemplazan archivos en uso. Al terminar la instalación, deja marcada la opción de ejecutar WinScreen Recorder para abrir la nueva versión.</p>
         </section>
 
         <section id="privacy" aria-labelledby="privacy-title">

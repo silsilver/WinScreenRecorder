@@ -1,0 +1,5 @@
+{
+  "schemaVersion": 1,
+  "gracefulShutdown": true,
+  "requestArgument": "--prepare-for-update"
+}

@@ -30,6 +30,41 @@ npm run dist:win
 
 El instalador x64 se genera en `dist/`. El proceso prepara una compilación Windows x64 de FFmpeg fijada a una versión y SHA-256, verifica sus componentes para WebM, MP4, MKV y GIF y la incluye fuera de ASAR. El paquete es grande porque incluye el conversor multimedia completo.
 
+## Instalar y actualizar
+
+1. Ejecuta el instalador y elige la ubicación de instalación.
+2. Si WinScreen Recorder está abierto en la ubicación que se actualizará, acepta la solicitud de cierre. Desde la versión 1.3.0, la aplicación finaliza la captura y conserva los originales pendientes antes de cerrar. El instalador espera hasta 45 segundos y comprueba la ruta exacta del programa; no fuerza la terminación.
+3. Si actualizas desde la versión 1.2.0 o una anterior, elige **Salir** desde el icono de la bandeja. Si hay una captura pendiente, selecciona **Conservar y salir**. Después pulsa **Reintentar** en el instalador. Esas versiones aún no pueden recibir la solicitud de cierre automático.
+4. Si no puede confirmarse el cierre, reintenta o cancela. Al terminar, deja marcada la opción de ejecutar WinScreen Recorder para abrir la nueva versión.
+
+La actualización conserva la configuración, los manifiestos de recuperación y las capturas. Una segunda ejecución normal activa la instancia existente. Una instalación silenciosa se cancela si no puede confirmar el cierre; no reemplaza archivos en uso. El generador NSIS compatible está fijado en la configuración de compilación.
+
+## Atajos de teclado
+
+Los atajos globales funcionan con la aplicación abierta, aunque esté oculta o estés usando otro programa. Iniciar utiliza la fuente y el tipo de captura seleccionados. Las acciones respetan los controles disponibles: no inician otra grabación mientras se guarda una captura y ningún atajo descarta archivos.
+
+| Atajo | Acción | Alcance |
+| --- | --- | --- |
+| Ctrl + Shift + F9 | Iniciar la captura seleccionada | Global |
+| Ctrl + Shift + F10 | Detener grabación o cancelar cuenta atrás | Global |
+| Ctrl + Shift + F11 | Mostrar la ventana principal | Global |
+| Ctrl + Shift + M | Alternar vista compacta | Global |
+| F1 | Consultar atajos de teclado | Ventana principal |
+| Ctrl + S | Guardar o reintentar captura pendiente | Ventana principal |
+| Ctrl + R | Actualizar pantallas y ventanas | Ventana principal |
+| Ctrl + L | Llevar el foco al selector de fuentes | Ventana principal |
+| Ctrl + Shift + A | Seleccionar una porción de pantalla | Ventana principal |
+| Ctrl + Shift + 1 | Activar o desactivar micrófono | Ventana principal |
+| Ctrl + Shift + 2 | Activar o desactivar audio de Windows | Ventana principal |
+| Ctrl + , | Ir a Configuración | Ventana principal |
+| Ctrl + Shift + R | Abrir grabaciones por recuperar | Ventana principal |
+| Ctrl + I | Abrir información de la aplicación | Ventana principal |
+| Esc | Cancelar cuenta atrás o cerrar ajustes y diálogos | Ventana principal |
+| F5 | Actualizar lista de recuperaciones | Recuperación |
+| Esc / Ctrl + W | Cerrar la ventana independiente | Información y recuperación |
+
+**Atajos de teclado**, al pie de la app, y **F1** abren la ayuda con la disponibilidad real de cada atajo. Si otro programa ocupa uno global, se indica como disponible solo en la ventana principal; vuelve a abrir la aplicación después de liberarlo para intentar registrarlo otra vez. Los atajos locales respetan los campos de texto y la composición de escritura. Usa Tab y Shift + Tab para recorrer controles, Enter o espacio para activarlos, y flechas, Inicio y Fin para recorrer las tarjetas de fuentes antes de seleccionarlas con Enter.
+
 ## Captura y formatos
 
 - El selector permite capturar video o imagen. Las imágenes se guardan como PNG o JPG; conservan la selección de pantalla/ventana, el tamaño de salida y la cuenta atrás. El audio y la transcripción se usan solo para video.

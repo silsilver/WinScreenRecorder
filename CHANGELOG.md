@@ -1,5 +1,12 @@
 # Cambios
 
+## 1.2.0 — 2026-10-15
+
+### Añadido
+
+- **Estado actual en el icono de la bandeja.** El texto emergente y el menú muestran preparación, grabación, pausa por escritura, transcripción, conversión y guardado. El contador de grabaciones por recuperar permanece visible al cambiar de estado.
+- **Información completa de la aplicación.** La opción «Acerca de la aplicación», al pie de la ventana principal, abre una ventana independiente con versión, autor, funciones, formatos, instrucciones, transcripción, recuperación y requisitos.
+
 ## 1.1.0 — 2026-10-15
 
 ### Añadido

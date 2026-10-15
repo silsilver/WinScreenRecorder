@@ -1,6 +1,6 @@
 {
   "name": "winscreen-recorder",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Windows screen and window recorder to standard formats",
   "author": {
     "name": "Alan Suástegui Vázquez",
@@ -13,7 +13,7 @@
     "start": "npm run prepare:ffmpeg && npm run prepare:whisper && electron .",
     "prepare:ffmpeg": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/prepare-ffmpeg.ps1",
     "dist:win": "npm run prepare:ffmpeg && npm run prepare:whisper && electron-builder --win nsis --x64",
-    "check": "node --check main.js && node --check preload.js && node --check src/renderer.js && node --check src/recording-recovery.js && node --check src/recovery-preload.js && node --check src/recovery.js && node --check src/permission-policy.js && node --check src/save-paths.js && node --check src/region-geometry.js && node --check src/window-geometry.js && node --check src/region-overlay-preload.js && node --check src/region-overlay.js",
+    "check": "node --check main.js && node --check preload.js && node --check src/renderer.js && node --check src/about-preload.js && node --check src/about.js && node --check src/tray-status.js && node --check src/recording-recovery.js && node --check src/recovery-preload.js && node --check src/recovery.js && node --check src/permission-policy.js && node --check src/save-paths.js && node --check src/region-geometry.js && node --check src/window-geometry.js && node --check src/region-overlay-preload.js && node --check src/region-overlay.js",
     "test": "node --test"
   },
   "devDependencies": {

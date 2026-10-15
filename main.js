@@ -11,6 +11,7 @@ const { Transform } = require('node:stream');
 const { fileURLToPath } = require('node:url');
 const { allowMicrophoneRequest } = require('./src/permission-policy');
 const { createRecoveryStore } = require('./src/recording-recovery');
+const { isValidTrayCaptureState, getTrayStatusLabel } = require('./src/tray-status');
 const { chooseUniqueMediaPath } = require('./src/save-paths');
 const { mapRegionToBounds } = require('./src/region-geometry');
 const { mapPhysicalRectToDisplay } = require('./src/window-geometry');
@@ -18,6 +19,7 @@ const execFileAsync = promisify(execFile);
 
 const rendererPath = path.join(__dirname, 'src', 'index.html');
 const recoveryRendererPath = path.join(__dirname, 'src', 'recovery.html');
+const aboutRendererPath = path.join(__dirname, 'src', 'about.html');
 const WINDOWS_STARTUP_ARGUMENT = '--started-from-windows';
 const startedFromWindowsLogin = process.platform === 'win32'
   && process.argv.includes(WINDOWS_STARTUP_ARGUMENT);
@@ -34,6 +36,11 @@ let regionSelectionBounds;
 let regionSelectionResolve;
 let regionSelectionReject;
 let tray;
+let trayCapturePhase = 'idle';
+let trayCapturePaused = false;
+let traySaveStage = null;
+let trayRecoveryCount = 0;
+let lastTrayToolTip = null;
 let compactModeEnabled = false;
 let compactSettingsExpanded = false;
 let fullWindowState = null;
@@ -43,6 +50,7 @@ let selectedCapture = { source: null, systemAudio: false, microphone: false };
 let recordingSession = null;
 let recoveryStore = null;
 let recoveryWindow = null;
+let aboutWindow = null;
 let recoverySaveOwner = null;
 let preserveRecordingForExitResolve = null;
 let preserveRecordingForExitTimer = null;
@@ -101,6 +109,25 @@ function registerRecoveryHandler(channel, handler) {
     }
     return handler(...args, recoveryWindow);
   });
+}
+
+function isTrustedAboutRenderer(event) {
+  if (!aboutWindow || event.sender !== aboutWindow.webContents || event.senderFrame !== aboutWindow.webContents.mainFrame) return false;
+  try {
+    return path.resolve(fileURLToPath(event.senderFrame.url)) === path.resolve(aboutRendererPath);
+  } catch {
+    return false;
+  }
+}
+
+function getAppInformation() {
+  const { author, productName } = require('./package.json');
+  return {
+    name: productName || app.getName(),
+    version: app.getVersion(),
+    developer: author.name,
+    email: author.email
+  };
 }
 
 function getLoginItemIdentity() {
@@ -470,6 +497,8 @@ async function resetSaveDirectory() {
 }
 
 function notifySaveProgress(stage) {
+  traySaveStage = stage;
+  refreshTrayMenu();
   const targetWindow = recoverySaveOwner || mainWindow;
   if (targetWindow && !targetWindow.isDestroyed()) {
     targetWindow.webContents.send('save-progress', { stage });
@@ -484,6 +513,7 @@ async function setRecoverySessionState(currentSession, state, failureStage = nul
     failureCode
   });
   currentSession.recoveryRecord = record;
+  refreshTrayMenu();
 }
 
 async function getRecoverySummaries() {
@@ -701,6 +731,47 @@ function openRecoveryWindow() {
   recoveryWindow.loadFile(recoveryRendererPath);
 }
 
+function openAboutWindow() {
+  if (aboutWindow && !aboutWindow.isDestroyed()) {
+    if (aboutWindow.isMinimized()) aboutWindow.restore();
+    aboutWindow.show();
+    aboutWindow.focus();
+    return;
+  }
+  const window = new BrowserWindow({
+    width: 860,
+    height: 760,
+    minWidth: 640,
+    minHeight: 520,
+    show: false,
+    autoHideMenuBar: true,
+    title: 'Acerca de WinScreen Recorder',
+    backgroundColor: '#0b1020',
+    icon: path.join(__dirname, 'src', 'app-icon.ico'),
+    webPreferences: {
+      preload: path.join(__dirname, 'src', 'about-preload.js'),
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: true,
+      webSecurity: true
+    }
+  });
+  aboutWindow = window;
+  window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  window.webContents.on('will-navigate', (event, destination) => {
+    try {
+      if (path.resolve(fileURLToPath(destination)) !== path.resolve(aboutRendererPath)) event.preventDefault();
+    } catch {
+      event.preventDefault();
+    }
+  });
+  window.once('ready-to-show', () => {
+    if (!window.isDestroyed()) window.show();
+  });
+  window.on('closed', () => { if (aboutWindow === window) aboutWindow = null; });
+  window.loadFile(aboutRendererPath);
+}
+
 function restoreFullWindowState() {
   if (!fullWindowState) return;
   const { bounds, maximized } = fullWindowState;
@@ -758,25 +829,43 @@ function toggleCompactModeFromShortcut() {
   else toggleWhenReady();
 }
 
-function refreshTrayMenu(recoveryCount = 0) {
-  if (!tray) return;
+function refreshTrayMenu(recoveryCount = trayRecoveryCount) {
+  if (Number.isInteger(recoveryCount) && recoveryCount >= 0) trayRecoveryCount = recoveryCount;
+  if (!tray || tray.isDestroyed()) return;
+  const statusLabel = getTrayStatusLabel({
+    phase: trayCapturePhase,
+    paused: trayCapturePaused,
+    sessionStatus: recordingSession?.status,
+    saveActive: Boolean(activeSavePromise),
+    saveStage: traySaveStage,
+    failureStage: recordingSession?.recoveryRecord?.failureStage,
+    captureWriteFailed: Boolean(recordingSession?.writeError)
+  });
+  const recoveryLabel = trayRecoveryCount === 1
+    ? '1 grabación por recuperar'
+    : `${trayRecoveryCount} grabaciones por recuperar`;
+  const toolTip = `${app.getName()}\n${statusLabel}${trayRecoveryCount ? `\n${recoveryLabel}` : ''}`;
+  if (toolTip === lastTrayToolTip) return;
   const template = [
+    { label: `Estado: ${statusLabel}`, enabled: false },
+    { type: 'separator' },
     { label: `Abrir ${app.getName()}`, click: showMainWindow }
   ];
-  if (recoveryCount > 0) {
+  if (trayRecoveryCount > 0) {
     template.push({
-      label: `Hay grabaciones por recuperar (${recoveryCount})`,
+      label: `Hay grabaciones por recuperar (${trayRecoveryCount})`,
       click: openRecoveryWindow
     });
   }
   template.push({ type: 'separator' }, { label: 'Salir', click: requestAppExit });
+  tray.setToolTip(toolTip);
   tray.setContextMenu(Menu.buildFromTemplate(template));
+  lastTrayToolTip = toolTip;
 }
 
 function createTray() {
   const iconPath = path.join(__dirname, 'src', 'app-icon.ico');
   tray = new Tray(nativeImage.createFromPath(iconPath).resize({ width: 16, height: 16 }));
-  tray.setToolTip(app.getName());
   refreshTrayMenu();
   tray.on('click', showMainWindow);
   tray.on('double-click', showMainWindow);
@@ -963,8 +1052,12 @@ async function createRecordingSession(hasAudio) {
     recoveryManaged: true,
     recoveryRecord
   };
-  stream.on('error', (error) => { currentSession.writeError = error; });
+  stream.on('error', (error) => {
+    currentSession.writeError = error;
+    refreshTrayMenu();
+  });
   recordingSession = currentSession;
+  refreshTrayMenu();
   return id;
 }
 
@@ -1198,6 +1291,7 @@ async function continueRecovery(id, format, ownerWindow) {
   if (recordingSession) throw new Error('Termina o conserva primero la grabación que está abierta en la ventana principal.');
   const previousProgressOwner = recoverySaveOwner;
   recoverySaveOwner = ownerWindow;
+  traySaveStage = 'recovery';
   const operation = (async () => {
     const currentSession = await loadRecoveryRecording(id);
     if (currentSession.status === 'unrecoverable') throw new Error('Esta grabación no se pudo recuperar.');
@@ -1218,11 +1312,14 @@ async function continueRecovery(id, format, ownerWindow) {
     }
   })();
   activeSavePromise = operation;
+  refreshTrayMenu();
   try {
     return await operation;
   } finally {
     if (activeSavePromise === operation) activeSavePromise = null;
     recoverySaveOwner = previousProgressOwner;
+    traySaveStage = null;
+    refreshTrayMenu();
     await notifyRecoverySessionsChanged();
   }
 }
@@ -1233,11 +1330,14 @@ async function saveRecording(id, format, ownerWindow = mainWindow, suppliedSessi
   recoverySaveOwner = ownerWindow;
   const operation = saveRecordingCore(id, format, ownerWindow, suppliedSession);
   activeSavePromise = operation;
+  refreshTrayMenu();
   try {
     return await operation;
   } finally {
     if (activeSavePromise === operation) activeSavePromise = null;
     recoverySaveOwner = previousProgressOwner;
+    traySaveStage = null;
+    refreshTrayMenu();
   }
 }
 
@@ -1252,6 +1352,8 @@ async function saveRecordingCore(id, format, ownerWindow, suppliedSession) {
   const sourceName = safeCaptureFileName(currentSession.sourceName);
   const defaultName = `${sourceName}-${new Date().toISOString().replace(/[:.]/g, '-')}.${format}`;
   currentSession.status = 'saving';
+  traySaveStage = null;
+  refreshTrayMenu();
   let saveDirectory;
   try {
     saveDirectory = await getSaveDirectoryStatus();
@@ -1459,6 +1561,7 @@ async function preserveCurrentSession(id, failureCode = 'capture-write-failed') 
   const currentSession = recordingSession;
   if (!currentSession || currentSession.id !== id) return false;
   currentSession.status = 'preserving';
+  refreshTrayMenu();
   await currentSession.writeChain.catch(() => {});
   if (currentSession.stream && !currentSession.stream.closed) {
     if (currentSession.writeError) {
@@ -1484,14 +1587,21 @@ async function preserveCurrentSession(id, failureCode = 'capture-write-failed') 
 }
 
 function registerIpcHandlers() {
-  registerHandler('get-developer-info', async () => {
-    const { author } = require('./package.json');
-    return {
-      name: app.getName(),
-      version: app.getVersion(),
-      developer: author.name,
-      email: author.email
-    };
+  registerHandler('get-developer-info', getAppInformation);
+  registerHandler('open-about-window', async () => {
+    openAboutWindow();
+    return { status: 'opened' };
+  });
+  ipcMain.handle('get-app-info', async (event) => {
+    if (!isTrustedAboutRenderer(event)) throw new Error('Solicitud de información rechazada: origen no confiable.');
+    return getAppInformation();
+  });
+  registerHandler('update-tray-capture-state', async (phase, paused) => {
+    if (!isValidTrayCaptureState(phase, paused)) throw new Error('El estado de captura no es válido.');
+    trayCapturePhase = phase;
+    trayCapturePaused = paused;
+    refreshTrayMenu();
+    return { status: 'updated' };
   });
   registerHandler('get-save-directory', getSaveDirectoryStatus);
   registerHandler('choose-save-directory', chooseSaveDirectory);
@@ -1626,6 +1736,7 @@ function registerIpcHandlers() {
         failureStage: null,
         failureCode: null
       });
+      refreshTrayMenu();
       return { status: 'ready' };
     } catch (error) {
       await preserveCurrentSession(id, 'capture-write-failed');

@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-src 'none'; form-action 'none'">
+  <meta name="color-scheme" content="dark">
+  <title>Acerca de WinScreen Recorder</title>
+  <link rel="stylesheet" href="about.css">
+  <script src="about.js" defer></script>
+</head>
+<body>
+  <main class="about-shell">
+    <header class="about-header">
+      <img class="app-icon" src="app-icon.ico" width="56" height="56" alt="">
+      <div>
+        <p class="eyebrow">ACERCA DE LA APLICACIÓN</p>
+        <h1 id="app-name">WinScreen Recorder</h1>
+        <p class="intro-copy">Captura tu pantalla, conserva tus grabaciones y genera subtítulos en tu equipo.</p>
+        <span class="version-label" id="app-version" role="status">Consultando versión…</span>
+      </div>
+    </header>
+    <p class="info-error" id="app-info-error" role="alert" hidden>No se pudo consultar la versión y el autor. Puedes seguir leyendo la información de la aplicación.</p>
+
+    <div class="about-layout">
+      <nav class="contents" aria-label="Contenido de la información">
+        <p class="eyebrow">EN ESTA VENTANA</p>
+        <a href="#features">Qué puedes hacer</a>
+        <a href="#formats">Formatos</a>
+        <a href="#first-capture">Cómo capturar</a>
+        <a href="#transcription">Transcripción</a>
+        <a href="#recovery">Guardado y recuperación</a>
+        <a href="#windows">Ventana y bandeja</a>
+        <a href="#privacy">Privacidad y requisitos</a>
+        <a href="#credits">Autor y componentes</a>
+      </nav>
+
+      <div class="about-content">
+        <section id="features" aria-labelledby="features-title">
+          <h2 id="features-title">Qué puedes hacer</h2>
+          <ul>
+            <li>Grabar una pantalla completa, una ventana o una porción de una pantalla.</li>
+            <li>Tomar una imagen de la fuente seleccionada.</li>
+            <li>Incluir el micrófono, el sonido de Windows o ambos en un video.</li>
+            <li>Elegir el tamaño original o limitar la salida a 1080p, 720p o 480p.</li>
+            <li>Iniciar al momento o usar una cuenta atrás de 3, 5 o 10 segundos.</li>
+            <li>Generar subtítulos automáticamente al guardar una grabación con audio.</li>
+            <li>Recuperar capturas interrumpidas y reintentar su guardado.</li>
+          </ul>
+        </section>
+
+        <section id="formats" aria-labelledby="formats-title">
+          <h2 id="formats-title">Formatos de salida</h2>
+          <table>
+            <caption class="visually-hidden">Formatos disponibles y su contenido</caption>
+            <thead><tr><th scope="col">Formato</th><th scope="col">Contenido</th></tr></thead>
+            <tbody>
+              <tr><th scope="row">MP4 / MKV</th><td>Video convertido a H.264, con audio AAC cuando la captura tiene sonido.</td></tr>
+              <tr><th scope="row">WebM</th><td>Video original de la captura, sin convertir a otro formato.</td></tr>
+              <tr><th scope="row">GIF</th><td>Animación sin audio. Si la captura original tiene sonido, puede generar un archivo de subtítulos independiente.</td></tr>
+              <tr><th scope="row">PNG / JPG</th><td>Imagen fija de la pantalla, ventana o porción seleccionada.</td></tr>
+              <tr><th scope="row">SRT</th><td>Subtítulos en un archivo separado, con el mismo nombre que el video o la animación.</td></tr>
+            </tbody>
+          </table>
+        </section>
+
+        <section id="first-capture" aria-labelledby="first-capture-title">
+          <h2 id="first-capture-title">Cómo hacer una captura</h2>
+          <ol>
+            <li>Elige <strong>Video</strong> o <strong>Imagen</strong> y selecciona una pantalla o ventana.</li>
+            <li>Para grabar solo una zona, elige una pantalla y pulsa <strong>Capturar una porción</strong>.</li>
+            <li>Ajusta el formato, el tamaño y la cuenta atrás. En video, elige también las fuentes de audio.</li>
+            <li>Inicia la captura. En video, pulsa <strong>Detener</strong> cuando termines.</li>
+            <li>Espera el guardado y, si hay audio, la transcripción. La aplicación muestra el resultado y permite reintentar si algo falla.</li>
+          </ol>
+        </section>
+
+        <section id="transcription" aria-labelledby="transcription-title">
+          <h2 id="transcription-title">Transcripción automática</h2>
+          <p>Las grabaciones con audio generan un archivo <code>.srt</code> junto a la captura final. Esto también aplica al original WebM y a las animaciones GIF obtenidas de una grabación con sonido. Las capturas sin audio no generan subtítulos.</p>
+          <p>La primera vez se descarga un modelo de reconocimiento de voz de aproximadamente 57 MiB. Después, la transcripción funciona en este equipo sin enviar el audio a un servicio externo. El tiempo que tarda depende de la duración y del equipo.</p>
+          <p>El reconocimiento puede cometer errores y depende de la claridad del audio. Si no se detecta voz, el archivo de subtítulos puede quedar vacío. Si el proceso se interrumpe, el reintento comienza desde el video original.</p>
+        </section>
+
+        <section id="recovery" aria-labelledby="recovery-title">
+          <h2 id="recovery-title">Dónde se guarda y cómo recuperar</h2>
+          <p>La carpeta predeterminada es <code>Videos\WinScreenRecorder</code>. Puedes cambiarla en Configuración. Si un nombre ya existe, la aplicación genera otro para conservar los archivos anteriores.</p>
+          <p>Cada grabación escribe su original en la subcarpeta <code>Recuperación</code> de la ubicación configurada. Si la aplicación se interrumpe, al volver a abrirla aparece un aviso para revisar las capturas pendientes en una ventana independiente.</p>
+          <p>Desde esa ventana puedes continuar el guardado o descartar una captura. El original se conserva hasta que el video y, cuando corresponda, los subtítulos se guardan correctamente, o hasta que lo descartas expresamente.</p>
+          <div class="important-note">
+            <h3>Qué se puede recuperar</h3>
+            <p>Un video interrumpido mientras se grababa se intenta reparar con los fragmentos que llegaron al disco. La recuperación depende de que puedan leerse y no siempre es posible. La aplicación no graba mientras está cerrada; cada nueva captura inicia un archivo independiente.</p>
+          </div>
+        </section>
+
+        <section id="windows" aria-labelledby="windows-title">
+          <h2 id="windows-title">Ventana, vista compacta y bandeja</h2>
+          <p>Usa la vista compacta para tener los controles en una barra pequeña. Puedes alternarla con <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>M</kbd>.</p>
+          <p>Cerrar la ventana principal la oculta en el área de notificación de Windows. Desde el icono puedes volver a abrirla, consultar el estado y acceder a las grabaciones por recuperar. El texto al pasar el cursor y el menú indican si está grabando, transcribiendo, convirtiendo o guardando.</p>
+          <p>Para cerrar el programa, elige <strong>Salir</strong> en el menú del icono. Si hay una captura pendiente, <strong>Conservar y salir</strong> permite continuar después. También puedes activar el inicio con Windows desde Configuración; la aplicación se inicia oculta en la bandeja.</p>
+        </section>
+
+        <section id="privacy" aria-labelledby="privacy-title">
+          <h2 id="privacy-title">Privacidad, requisitos y límites</h2>
+          <ul>
+            <li>Aplicación de escritorio para Windows 10 y 11 de 64 bits.</li>
+            <li>La captura, la conversión y la transcripción se procesan localmente. El audio no se envía a un servicio de transcripción.</li>
+            <li>Se necesita Internet para la primera descarga del modelo de voz y espacio libre para los originales y las salidas.</li>
+            <li>El sonido de Windows depende del soporte de captura de audio disponible. Las imágenes y los GIF no contienen una pista de sonido.</li>
+            <li>Si la escritura al disco se retrasa, la grabación se pausa automáticamente hasta procesar los datos pendientes. El contador excluye esa pausa.</li>
+            <li>La velocidad y calidad de conversión dependen del equipo, la fuente y el tamaño de la captura.</li>
+          </ul>
+        </section>
+
+        <section id="credits" aria-labelledby="credits-title">
+          <h2 id="credits-title">Autor y componentes</h2>
+          <dl class="app-details">
+            <div><dt>Desarrollador</dt><dd id="app-developer">Consultando…</dd></div>
+            <div><dt>Contacto</dt><dd id="app-email">Consultando…</dd></div>
+            <div><dt>Aplicación</dt><dd>WinScreen Recorder para Windows</dd></div>
+          </dl>
+          <p>La conversión multimedia utiliza FFmpeg bajo LGPLv3 o posterior y OpenH264 bajo BSD-2-Clause. El reconocimiento de voz utiliza whisper.cpp bajo MIT. Los avisos y textos de licencia se incluyen con la instalación.</p>
+        </section>
+      </div>
+    </div>
+  </main>
+</body>
+</html>

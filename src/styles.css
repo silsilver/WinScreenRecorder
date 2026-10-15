@@ -179,8 +179,8 @@ body:not(.image-mode) #capture-mode-select { border-color: rgba(251, 113, 133, .
 .save-buttons .secondary-button, .save-buttons .quiet-button { min-height: 34px; font-size: 9px; }
 
 .app-footer { flex: 0 0 auto; margin-top: 12px; color: #718098; font-size: 9px; }
-.footer-actions { gap: 16px; }
-.footer-button { padding: 0; border: 0; color: #8b99af; background: transparent; font: inherit; cursor: pointer; }
+.footer-actions { flex-wrap: wrap; justify-content: flex-end; gap: 16px; }
+.footer-button { min-height: 28px; padding: 0; border: 0; color: #8b99af; background: transparent; font: inherit; cursor: pointer; }
 .footer-button:hover { color: var(--text); }
 .footer-separator { padding: 0 4px; color: #4c5b73; }
 .license-details { position: relative; }

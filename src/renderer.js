@@ -38,6 +38,7 @@
     compactRecoveries: document.getElementById('compact-recoveries'),
     compactExpand: document.getElementById('compact-expand'),
     developerInfoButton: document.getElementById('developer-info-button'),
+    aboutInfoButton: document.getElementById('about-info-button'),
     developerDialog: document.getElementById('developer-dialog'),
     closeDeveloperDialog: document.getElementById('close-developer-dialog'),
     developerName: document.getElementById('developer-name'),
@@ -313,8 +314,14 @@
     elements.compactTimer.textContent = elements.timer.textContent;
   }
 
+  function syncTrayCaptureState() {
+    const paused = state.phase === 'recording' && state.mediaRecorder?.state === 'paused';
+    window.electronAPI.updateTrayCaptureState(state.phase, paused).catch(() => {});
+  }
+
   function setPhase(phase) {
     state.phase = phase;
+    syncTrayCaptureState();
     elements.idleActions.hidden = phase !== 'idle';
     elements.countdownActions.hidden = phase !== 'countdown';
     elements.recordingActions.hidden = phase !== 'recording' && phase !== 'finalizing';
@@ -1018,6 +1025,8 @@
     state.chunkError = null;
     state.stopping = false;
     state.mediaRecorder = new MediaRecorder(state.captureStream, { mimeType });
+    state.mediaRecorder.addEventListener('pause', syncTrayCaptureState);
+    state.mediaRecorder.addEventListener('resume', syncTrayCaptureState);
     state.mediaRecorder.addEventListener('dataavailable', (event) => {
       if (event.data.size === 0 || !state.recordingId) return;
       state.pendingChunkBytes += event.data.size;
@@ -1331,6 +1340,11 @@
   elements.compactStop.addEventListener('click', () => elements.stop.click());
   elements.compactSave.addEventListener('click', () => (elements.saveWebm.hidden ? elements.save : elements.saveWebm).click());
   elements.compactDiscard.addEventListener('click', () => elements.discard.click());
+  elements.aboutInfoButton.addEventListener('click', () => {
+    window.electronAPI.openAboutWindow().catch((error) => {
+      setStatus(`No se pudo abrir la información de la aplicación: ${error.message}`);
+    });
+  });
   elements.developerInfoButton.addEventListener('click', async () => {
     try {
       if (!state.developerInfo) state.developerInfo = await window.electronAPI.getDeveloperInfo();

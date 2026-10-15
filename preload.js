@@ -3,6 +3,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('electronAPI', {
   getSources: () => ipcRenderer.invoke('get-sources'),
   getDeveloperInfo: () => ipcRenderer.invoke('get-developer-info'),
+  openAboutWindow: () => ipcRenderer.invoke('open-about-window'),
   getSaveDirectory: () => ipcRenderer.invoke('get-save-directory'),
   chooseSaveDirectory: () => ipcRenderer.invoke('choose-save-directory'),
   resetSaveDirectory: () => ipcRenderer.invoke('reset-save-directory'),
@@ -11,6 +12,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   setCompactMode: (compact) => ipcRenderer.invoke('set-compact-mode', compact),
   setCompactSettingsOpen: (expanded, requestedHeight) => ipcRenderer.invoke('set-compact-settings-open', expanded, requestedHeight),
   windowAction: (action) => ipcRenderer.invoke('window-action', action),
+  updateTrayCaptureState: (phase, paused) => ipcRenderer.invoke('update-tray-capture-state', phase, paused),
   onCompactModeToggle: (callback) => {
     if (typeof callback !== 'function') return () => {};
     const listener = () => callback();

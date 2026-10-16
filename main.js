@@ -15,6 +15,9 @@ const { isValidTrayCaptureState, getTrayStatusLabel } = require('./src/tray-stat
 const { shortcuts: keyboardShortcuts } = require('./src/keyboard-shortcuts');
 const { configureAppLifecycle } = require('./src/app-lifecycle');
 const { chooseUniqueMediaPath } = require('./src/save-paths');
+const { normalizeVideoOptions, normalizeDuration } = require('./src/video-options');
+const { createFfmpegProgressParser, createDownloadProgressReporter } = require('./src/save-progress');
+const { readDiskSpace, requireDiskSpace } = require('./src/disk-space');
 const { mapRegionToBounds } = require('./src/region-geometry');
 const { mapPhysicalRectToDisplay } = require('./src/window-geometry');
 const execFileAsync = promisify(execFile);
@@ -40,6 +43,7 @@ let regionSelectionReject;
 let tray;
 let trayCapturePhase = 'idle';
 let trayCapturePaused = false;
+let trayCapturePauseReason = null;
 let traySaveStage = null;
 let trayRecoveryCount = 0;
 let lastTrayToolTip = null;
@@ -510,12 +514,12 @@ async function resetSaveDirectory() {
   return getSaveDirectoryStatus();
 }
 
-function notifySaveProgress(stage) {
+function notifySaveProgress(stage, details = {}) {
   traySaveStage = stage;
   refreshTrayMenu();
   const targetWindow = recoverySaveOwner || mainWindow;
   if (targetWindow && !targetWindow.isDestroyed()) {
-    targetWindow.webContents.send('save-progress', { stage });
+    targetWindow.webContents.send('save-progress', { stage, ...details });
   }
 }
 
@@ -540,6 +544,7 @@ async function getRecoverySummaries() {
     state: record.state,
     failureStage: record.failureStage,
     failureCode: record.failureCode,
+    savedMediaPath: record.savedMediaPath,
     mediaExists: record.mediaExists,
     mediaSize: record.mediaSize,
     manifestInvalid: Boolean(record.manifestInvalid),
@@ -625,9 +630,11 @@ async function ensureWhisperModel() {
     }
     const output = fs.createWriteStream(partialPath, { flags: 'wx' });
     let receivedBytes = 0;
+    const reportDownload = createDownloadProgressReporter(contentLength, (progress) => notifySaveProgress('model-download', progress));
     const sizeLimit = new Transform({
       transform(chunk, encoding, callback) {
         receivedBytes += chunk.length;
+        reportDownload(receivedBytes);
         callback(receivedBytes > MODEL_DOWNLOAD_MAX_BYTES
           ? new Error('El modelo excede el tamaño máximo permitido.')
           : null, chunk);
@@ -639,6 +646,7 @@ async function ensureWhisperModel() {
       throw new Error('La verificación de integridad del modelo falló. Intenta descargarlo de nuevo.');
     }
     await fsp.rename(partialPath, modelPath);
+    notifySaveProgress('model-download', { percent: 100, receivedBytes });
     const modelStat = await fsp.stat(modelPath);
     verifiedModelIdentity = { size: modelStat.size, mtimeMs: modelStat.mtimeMs };
     return modelPath;
@@ -793,7 +801,7 @@ function openAboutWindow(section = 'overview') {
 }
 
 function dispatchCaptureShortcut(action) {
-  if (!['capture-start', 'capture-stop'].includes(action) || choosingSaveDirectory || closePromptOpen || isPreparingQuit || updateExitRequested) return;
+  if (!['capture-start', 'capture-stop', 'capture-pause'].includes(action) || choosingSaveDirectory || closePromptOpen || isPreparingQuit || updateExitRequested) return;
   if (!mainWindow || mainWindow.isDestroyed()) return;
   const script = `document.dispatchEvent(new CustomEvent('recorder-keyboard-action', { detail: ${JSON.stringify(action)} }));`;
   const dispatch = () => {
@@ -882,6 +890,7 @@ function refreshTrayMenu(recoveryCount = trayRecoveryCount) {
   const statusLabel = getTrayStatusLabel({
     phase: trayCapturePhase,
     paused: trayCapturePaused,
+    pauseReason: trayCapturePauseReason,
     sessionStatus: recordingSession?.status,
     saveActive: Boolean(activeSavePromise),
     saveStage: traySaveStage,
@@ -1061,7 +1070,7 @@ function configureCaptureHandler() {
   });
 }
 
-async function createRecordingSession(hasAudio) {
+async function createRecordingSession(hasAudio, videoOptions = {}) {
   if (recordingSession || activeSavePromise) throw new Error('Ya existe una grabación activa o pendiente de guardar.');
   const id = randomUUID();
   if (!recoveryStore) throw new Error('El sistema de recuperación todavía no está listo.');
@@ -1069,12 +1078,14 @@ async function createRecordingSession(hasAudio) {
   if (!saveDirectory.available) {
     throw new Error('La carpeta de guardado no está disponible. Elige otra en Preferencias antes de grabar.');
   }
+  await requireDiskSpace(saveDirectory.directory);
   const recoveryRecord = await recoveryStore.createSession({
     id,
     videoDirectory: saveDirectory.directory,
     sourceName: selectedCapture.source?.name,
     startedAt: new Date().toISOString(),
-    hasAudio: Boolean(hasAudio)
+    hasAudio: Boolean(hasAudio),
+    videoOptions: normalizeVideoOptions(videoOptions)
   });
   const filePath = recoveryRecord.mediaPath;
   const stream = fs.createWriteStream(filePath, { flags: 'r+' });
@@ -1136,11 +1147,11 @@ async function closeRecordingStream(currentSession) {
   currentSession.status = 'ready';
 }
 
-function getOutputOptions(format, hasAudio) {
+function getOutputOptions(format, hasAudio, videoOptions = {}) {
   if (format === 'mp4' || format === 'mkv') {
     return [
       '-map', '0:v:0', '-map', '0:a:0?',
-      '-c:v', 'libopenh264', '-b:v', '6M', '-pix_fmt', 'yuv420p',
+      '-c:v', 'libopenh264', '-b:v', String(normalizeVideoOptions(videoOptions).videoBitsPerSecond), '-pix_fmt', 'yuv420p',
       ...(hasAudio ? ['-c:a', 'aac', '-b:a', '160k'] : ['-an']),
       ...(format === 'mp4' ? ['-movflags', '+faststart'] : [])
     ];
@@ -1154,9 +1165,10 @@ function getOutputOptions(format, hasAudio) {
   throw new Error('El formato de salida seleccionado no está permitido.');
 }
 
-function runChildProcess(executablePath, args, label) {
+function runChildProcess(executablePath, args, label, onStdout = null) {
   return new Promise((resolve, reject) => {
-    const child = spawn(executablePath, args, { windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] });
+    const child = spawn(executablePath, args, { windowsHide: true, stdio: ['ignore', onStdout ? 'pipe' : 'ignore', 'pipe'] });
+    if (onStdout) child.stdout.on('data', (data) => onStdout(data.toString()));
     activeChildProcess = child;
     let stderr = '';
     child.stderr.on('data', (data) => { stderr = `${stderr}${data.toString()}`.slice(-8000); });
@@ -1172,11 +1184,14 @@ function runChildProcess(executablePath, args, label) {
   });
 }
 
-function runFfmpeg(inputPath, outputPath, format, hasAudio) {
-  return runChildProcess(getFfmpegPath(), [
+async function runFfmpeg(inputPath, outputPath, format, hasAudio, videoOptions = {}, durationMs = null) {
+  const parseProgress = createFfmpegProgressParser(durationMs, (progress) => notifySaveProgress('conversion', progress));
+  await runChildProcess(getFfmpegPath(), [
     '-nostdin', '-hide_banner', '-loglevel', 'error', '-y', '-i', inputPath,
-    ...getOutputOptions(format, hasAudio), outputPath
-  ], 'FFmpeg');
+    '-progress', 'pipe:1', '-stats_period', '0.5',
+    ...getOutputOptions(format, hasAudio, videoOptions), outputPath
+  ], 'FFmpeg', parseProgress);
+  notifySaveProgress('conversion', { percent: 100 });
 }
 
 function validateSrt(contents) {
@@ -1395,6 +1410,19 @@ async function saveRecordingCore(id, format, ownerWindow, suppliedSession) {
   }
   if (!['webm', 'mp4', 'mkv', 'gif'].includes(format)) throw new Error('El formato de salida seleccionado no está permitido.');
 
+  // A published video only needs its pending subtitles, including after restart.
+  if (currentSession.recoveryRecord?.savedMediaPath) {
+    if (!await publishedVideoExists(currentSession.recoveryRecord.savedMediaPath)) {
+      currentSession.recoveryRecord = await recoveryStore.updateSession(currentSession.id, {
+        savedMediaPath: null, state: 'ready', failureStage: null, failureCode: null
+      });
+      if (ownerWindow !== mainWindow && recordingSession === currentSession) recordingSession = null;
+      return { status: 'save-failed', message: 'El video guardado ya no está disponible. El original se conserva: elige un formato y pulsa Continuar guardado para volver a exportarlo.' };
+    }
+    currentSession.status = 'saving';
+    return finishRecordingSubtitles(currentSession, currentSession.recoveryRecord.savedMediaPath);
+  }
+
   const label = { webm: 'WebM', mp4: 'MP4', mkv: 'MKV', gif: 'GIF' }[format];
   const sourceName = safeCaptureFileName(currentSession.sourceName);
   const defaultName = `${sourceName}-${new Date().toISOString().replace(/[:.]/g, '-')}.${format}`;
@@ -1430,18 +1458,12 @@ async function saveRecordingCore(id, format, ownerWindow, suppliedSession) {
     overwriteConfirmed = fs.existsSync(targetPath);
   }
   let temporaryOutput = null;
-  let temporarySubtitle = null;
-  let stage = 'transcription';
+  let stage = format === 'webm' ? 'finalizing' : 'conversion';
   try {
-    let subtitlePath = null;
-    if (currentSession.hasAudio) {
-      await setRecoverySessionState(currentSession, 'transcribing');
-      subtitlePath = await ensureSessionTranscript(currentSession);
-    }
+    await requireDiskSpace(path.dirname(targetPath));
     assertSaveSessionActive(currentSession);
 
     if (currentSession.hasAudio && !overwriteConfirmed) targetPath = chooseAvailableMediaPath(targetPath);
-    const subtitleTargetPath = currentSession.hasAudio ? getSubtitlePath(targetPath) : null;
 
     temporaryOutput = path.join(path.dirname(targetPath), `.${path.parse(targetPath).name}-${id}.partial.${format}`);
     currentSession.temporaryOutput = temporaryOutput;
@@ -1449,43 +1471,24 @@ async function saveRecordingCore(id, format, ownerWindow, suppliedSession) {
     await setRecoverySessionState(currentSession, stage === 'conversion' ? 'converting' : 'finalizing');
     if (stage === 'conversion') notifySaveProgress('conversion');
     if (format === 'webm') await fsp.copyFile(currentSession.filePath, temporaryOutput);
-    else await runFfmpeg(currentSession.filePath, temporaryOutput, format, currentSession.hasAudio);
+    else await runFfmpeg(currentSession.filePath, temporaryOutput, format, currentSession.hasAudio,
+      currentSession.recoveryRecord?.videoOptions, currentSession.recoveryRecord?.durationMs);
     assertSaveSessionActive(currentSession);
 
     stage = 'finalizing';
     await setRecoverySessionState(currentSession, 'finalizing');
     notifySaveProgress('finalizing');
     if ((await fsp.stat(temporaryOutput)).size === 0) throw new Error('La salida generada está vacía.');
-    const outputs = [{ temporaryPath: temporaryOutput, targetPath }];
-    if (subtitlePath) {
-      temporarySubtitle = path.join(path.dirname(targetPath), `.${path.parse(targetPath).name}-${id}.partial.srt`);
-      currentSession.temporarySubtitle = temporarySubtitle;
-      await fsp.copyFile(subtitlePath, temporarySubtitle);
-      outputs.push({ temporaryPath: temporarySubtitle, targetPath: subtitleTargetPath });
-    }
-    await commitOutputPair(outputs, currentSession, overwriteConfirmed);
-    if (currentSession.recoveryManaged && recoveryStore) {
-      await recoveryStore.removeSession(currentSession.id);
-    } else {
-      await fsp.rm(currentSession.filePath, { force: true }).catch(() => {});
-    }
-    if (currentSession.subtitleTempPath) await fsp.rm(path.dirname(currentSession.subtitleTempPath), { recursive: true, force: true }).catch(() => {});
-    recordingSession = null;
-    await notifyRecoverySessionsChanged();
-    return { status: 'saved', path: targetPath, subtitlePath: subtitlePath ? subtitleTargetPath : null };
+    await commitOutputPair([{ temporaryPath: temporaryOutput, targetPath }], currentSession, overwriteConfirmed);
+    currentSession.temporaryOutput = null;
   } catch (error) {
     if (temporaryOutput) await fsp.rm(temporaryOutput, { force: true }).catch(() => {});
-    if (temporarySubtitle) await fsp.rm(temporarySubtitle, { force: true }).catch(() => {});
     if (recordingSession === currentSession) {
       currentSession.temporaryOutput = null;
       currentSession.temporarySubtitle = null;
       currentSession.status = 'ready';
-      const failureStage = stage === 'transcription' ? 'transcription' : stage === 'conversion' ? 'conversion' : 'finalizing';
-      const failureCode = stage === 'transcription'
-        ? 'transcription-failed'
-        : stage === 'conversion'
-          ? 'conversion-failed'
-          : 'finalization-failed';
+      const failureStage = stage === 'conversion' ? 'conversion' : 'finalizing';
+      const failureCode = stage === 'conversion' ? 'conversion-failed' : 'finalization-failed';
       await setRecoverySessionState(currentSession, 'failed', failureStage, failureCode).catch(() => {});
       currentSession.status = 'ready';
       if (ownerWindow && ownerWindow !== mainWindow) {
@@ -1493,9 +1496,68 @@ async function saveRecordingCore(id, format, ownerWindow, suppliedSession) {
         await notifyRecoverySessionsChanged();
       }
     }
-    if (stage === 'transcription') return { status: 'transcription-failed', message: error.message, canSaveWebm: true };
     if (stage === 'conversion') return { status: 'conversion-failed', message: error.message, canSaveWebm: true };
     return { status: 'save-failed', message: error.message, canSaveWebm: true };
+  }
+  return finishRecordingSubtitles(currentSession, targetPath);
+}
+
+async function finishRecordingSubtitles(currentSession, targetPath) {
+  let temporarySubtitle = null;
+  let subtitleTargetPath = null;
+  let warning = null;
+  try {
+    if (currentSession.hasAudio) {
+      // Persist before transcription so a restart retries only the SRT.
+      if (currentSession.recoveryManaged && recoveryStore) {
+        currentSession.recoveryRecord = await recoveryStore.updateSession(currentSession.id, {
+          savedMediaPath: targetPath, state: 'transcribing', failureStage: null, failureCode: null
+        });
+      }
+      const subtitlePath = await ensureSessionTranscript(currentSession);
+      assertSaveSessionActive(currentSession);
+      if (!await publishedVideoExists(targetPath)) throw new Error('El video guardado se movió o dejó de estar disponible. El original se conserva.');
+      subtitleTargetPath = chooseUniqueMediaPath(getSubtitlePath(targetPath), (candidate) => fs.existsSync(candidate));
+      temporarySubtitle = path.join(path.dirname(targetPath), `.${path.parse(targetPath).name}-${currentSession.id}.partial.srt`);
+      currentSession.temporarySubtitle = temporarySubtitle;
+      await fsp.copyFile(subtitlePath, temporarySubtitle);
+      await commitOutputPair([{ temporaryPath: temporarySubtitle, targetPath: subtitleTargetPath }], currentSession, false);
+      temporarySubtitle = null;
+    }
+  } catch (error) {
+    warning = error.message;
+    subtitleTargetPath = null;
+    if (temporarySubtitle) await fsp.rm(temporarySubtitle, { force: true }).catch(() => {});
+    await setRecoverySessionState(currentSession, 'failed', 'transcription', 'transcription-failed').catch(() => {});
+  }
+
+  if (!warning) {
+    try {
+      if (!await publishedVideoExists(targetPath)) throw new Error('El video de destino ya no está disponible; se conserva el original.');
+      if (currentSession.recoveryManaged && recoveryStore) await recoveryStore.removeSession(currentSession.id);
+      else await fsp.rm(currentSession.filePath, { force: true });
+    } catch (error) {
+      // Published files must never be reported as a failed video save.
+      warning = `Los archivos se guardaron, pero no se pudo limpiar la recuperación: ${error.message}`;
+    }
+  }
+  if (currentSession.subtitleTempPath) await fsp.rm(path.dirname(currentSession.subtitleTempPath), { recursive: true, force: true }).catch(() => {});
+  currentSession.temporarySubtitle = null;
+  if (recordingSession === currentSession) recordingSession = null;
+  await notifyRecoverySessionsChanged();
+  return {
+    status: 'saved', path: targetPath, subtitlePath: subtitleTargetPath,
+    subtitlesPending: Boolean(currentSession.hasAudio && !subtitleTargetPath), warning
+  };
+}
+
+async function publishedVideoExists(targetPath) {
+  try {
+    const stat = await fsp.lstat(targetPath);
+    return stat.isFile() && !stat.isSymbolicLink() && stat.size > 0;
+  } catch (error) {
+    if (error.code === 'ENOENT') return false;
+    throw error;
   }
 }
 
@@ -1518,6 +1580,7 @@ async function saveImage(input, format, sourceName) {
 
   const saveDirectory = await getSaveDirectoryStatus();
   if (!saveDirectory.available) throw new Error('La carpeta de guardado predeterminada no está disponible. Elige otra en Preferencias / Configuración.');
+  await requireDiskSpace(saveDirectory.directory);
   const captureName = safeCaptureFileName(sourceName);
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
   const targetPath = chooseUniqueMediaPath(
@@ -1644,14 +1707,21 @@ function registerIpcHandlers() {
     if (!isTrustedAboutRenderer(event)) throw new Error('Solicitud de información rechazada: origen no confiable.');
     return getAppInformation();
   });
-  registerHandler('update-tray-capture-state', async (phase, paused) => {
-    if (!isValidTrayCaptureState(phase, paused)) throw new Error('El estado de captura no es válido.');
+  registerHandler('update-tray-capture-state', async (phase, paused, reason = null) => {
+    if (!isValidTrayCaptureState(phase, paused, reason)) throw new Error('El estado de captura no es válido.');
     trayCapturePhase = phase;
     trayCapturePaused = paused;
+    trayCapturePauseReason = reason;
     refreshTrayMenu();
     return { status: 'updated' };
   });
   registerHandler('get-save-directory', getSaveDirectoryStatus);
+  registerHandler('get-disk-space', async () => {
+    const directory = recordingSession?.filePath
+      ? path.dirname(recordingSession.filePath)
+      : (await getSaveDirectoryStatus()).directory;
+    return readDiskSpace(directory);
+  });
   registerHandler('choose-save-directory', async () => {
     if (choosingSaveDirectory) throw new Error('Ya hay una selección de carpeta abierta.');
     choosingSaveDirectory = true;
@@ -1757,12 +1827,12 @@ function registerIpcHandlers() {
     return { systemAudioAvailable: process.platform === 'win32' };
   });
 
-  registerHandler('begin-recording', async (hasAudio) => {
+  registerHandler('begin-recording', async (hasAudio, videoOptions) => {
     if (!await getSourceById(selectedCapture.source?.id)) {
       throw new Error('La fuente seleccionada ya no está disponible. Actualiza las fuentes e inténtalo de nuevo.');
     }
     if (typeof hasAudio !== 'boolean') throw new Error('La configuración de audio de la grabación no es válida.');
-    return createRecordingSession(hasAudio);
+    return createRecordingSession(hasAudio, normalizeVideoOptions(videoOptions));
   });
   registerHandler('get-capture-failure', async () => {
     const message = lastCaptureFailure;
@@ -1775,17 +1845,19 @@ function registerIpcHandlers() {
     }
     await enqueueChunk(recordingSession, chunk);
   });
-  registerHandler('complete-recording', async (id, hasAudio) => {
+  registerHandler('complete-recording', async (id, hasAudio, durationMs = null) => {
     if (!recordingSession || recordingSession.id !== id || recordingSession.status !== 'recording' || typeof hasAudio !== 'boolean') {
       throw new Error('La sesión de grabación no puede finalizarse.');
     }
     try {
+      durationMs = normalizeDuration(durationMs);
       recordingSession.hasAudio = hasAudio;
       await closeRecordingStream(recordingSession);
       recordingSession.status = 'ready';
       recordingSession.recoveryRecord = await recoveryStore.updateSession(id, {
         state: 'ready',
         hasAudio,
+        durationMs,
         failureStage: null,
         failureCode: null
       });
@@ -1845,6 +1917,18 @@ if (shouldStartApplication) app.whenReady().then(() => {
   if (updateExitRequested) { app.quit(); return; }
   migrateWindowsLoginItem();
   recoveryStore = createRecoveryStore({ userDataPath: app.getPath('userData') });
+  let diskMonitorBusy = false;
+  setInterval(async () => {
+    const current = recordingSession;
+    if (!current || current.status !== 'recording' || diskMonitorBusy) return;
+    diskMonitorBusy = true;
+    try {
+      const disk = await readDiskSpace(path.dirname(current.filePath));
+      if (recordingSession === current && current.status === 'recording' && mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('disk-space-changed', disk);
+      }
+    } finally { diskMonitorBusy = false; }
+  }, 5000).unref();
   Menu.setApplicationMenu(null);
   createTray();
   makeWindow();

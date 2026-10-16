@@ -65,6 +65,31 @@ test('rejects an invalid identifier before building a manifest path', async () =
   });
 });
 
+test('recovery retains the selected quality and elapsed duration after restart', async () => {
+  await withRecoveryStore(async ({ root, videoDirectory, store }) => {
+    const record = await store.createSession({ videoDirectory, sourceName: 'Pantalla', videoOptions: { frameRate: 60, videoBitsPerSecond: 16000000 } });
+    await store.updateSession(record.id, { state: 'ready', durationMs: 12345 });
+    const restored = await createRecoveryStore({ userDataPath: root }).getSession(record.id);
+    assert.deepEqual(restored.videoOptions, { frameRate: 60, videoBitsPerSecond: 16000000 });
+    assert.equal(restored.durationMs, 12345);
+  });
+});
+
+test('accepts old manifests without a saved video and rejects unsafe published paths', async () => {
+  await withRecoveryStore(async ({ root, videoDirectory, store }) => {
+    const record = await store.createSession({ videoDirectory, sourceName: 'Pantalla' });
+    assert.equal(record.savedMediaPath, null);
+    const manifestPath = path.join(root, 'recording-recovery', `${record.id}.json`);
+    const legacy = JSON.parse(await fs.readFile(manifestPath, 'utf8'));
+    delete legacy.savedMediaPath;
+    await fs.writeFile(manifestPath, JSON.stringify(legacy));
+    assert.equal((await store.getSession(record.id)).savedMediaPath, null);
+    for (const savedMediaPath of ['relative.mp4', path.join(root, 'script.exe'), 123]) {
+      await assert.rejects(store.updateSession(record.id, { savedMediaPath }), /ruta del video/);
+    }
+  });
+});
+
 test('rejects a manifest media name that escapes its recovery directory', async () => {
   await withRecoveryStore(async ({ root, videoDirectory, store }) => {
     const record = await store.createSession({

@@ -8,6 +8,8 @@ test('separates starting and stopping and avoids double handling of registered g
   const event = { key: 'F9', ctrlKey: true, shiftKey: true };
   assert.equal(findShortcut(event).action, 'capture-start');
   assert.equal(findShortcut({ ...event, key: 'F10' }).action, 'capture-stop');
+  assert.equal(findShortcut({ ...event, key: 'F8' }).action, 'capture-pause');
+  assert.equal(findShortcut({ ...event, key: 'F8' }, { registeredGlobals: new Set(['capture-pause']) }), null);
   assert.equal(findShortcut(event, { registeredGlobals: new Set(['capture-start']) }), null);
   assert.equal(shortcuts.some((item) => /discard|delete/.test(item.action)), false);
 });

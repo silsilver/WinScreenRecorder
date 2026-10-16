@@ -3,6 +3,7 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { randomUUID } = require('node:crypto');
+const { normalizeVideoOptions, normalizeDuration } = require('./video-options');
 
 const RECOVERY_FOLDER_NAME = 'Recuperación';
 const MANIFEST_FOLDER_NAME = 'recording-recovery';
@@ -109,6 +110,14 @@ function normalizeManifest(raw, expectedId = null) {
     throw new Error('El registro de recuperación está incompleto.');
   }
 
+  const savedMediaPath = raw.savedMediaPath ?? null;
+  if (savedMediaPath !== null && (typeof savedMediaPath !== 'string'
+    || !path.isAbsolute(savedMediaPath)
+    || !['.webm', '.mp4', '.mkv', '.gif'].includes(path.extname(savedMediaPath).toLowerCase())
+    || /[\u0000-\u001f]/.test(savedMediaPath))) {
+    throw new Error('La ruta del video guardado no es válida.');
+  }
+
   return {
     schemaVersion: MANIFEST_VERSION,
     id,
@@ -121,6 +130,9 @@ function normalizeManifest(raw, expectedId = null) {
     state: raw.state,
     failureStage,
     failureCode,
+    savedMediaPath,
+    videoOptions: normalizeVideoOptions(raw.videoOptions),
+    durationMs: normalizeDuration(raw.durationMs ?? null),
     updatedAt: typeof raw.updatedAt === 'string' ? raw.updatedAt : startedAt.toISOString()
   };
 }
@@ -239,7 +251,7 @@ function createRecoveryStore({ userDataPath }) {
     return { ...record, mediaExists: mediaExists || repairBackupExists, mediaSize, mediaPath, repairBackupExists };
   }
 
-  async function createSession({ id = randomUUID(), videoDirectory, sourceName, startedAt = new Date().toISOString(), hasAudio = null }) {
+  async function createSession({ id = randomUUID(), videoDirectory, sourceName, startedAt = new Date().toISOString(), hasAudio = null, videoOptions = {} }) {
     assertSessionId(id);
     const safeVideoDirectory = validateVideoDirectory(videoDirectory);
     const recoveryDirectory = deriveRecoveryDirectory(safeVideoDirectory);
@@ -252,6 +264,7 @@ function createRecoveryStore({ userDataPath }) {
       sourceName,
       startedAt: new Date(startedAt).toISOString(),
       hasAudio: typeof hasAudio === 'boolean' ? hasAudio : null,
+      videoOptions,
       state: 'recording',
       failureStage: null,
       failureCode: null,
@@ -273,7 +286,7 @@ function createRecoveryStore({ userDataPath }) {
 
   async function updateSession(id, changes) {
     const current = await readSession(id);
-    const allowedKeys = new Set(['state', 'hasAudio', 'failureStage', 'failureCode']);
+    const allowedKeys = new Set(['state', 'hasAudio', 'failureStage', 'failureCode', 'savedMediaPath', 'durationMs']);
     if (!changes || typeof changes !== 'object'
       || Object.keys(changes).some((key) => !allowedKeys.has(key))) {
       throw new Error('La actualización de recuperación contiene campos no permitidos.');

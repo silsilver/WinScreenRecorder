@@ -2,6 +2,7 @@
 
 (() => {
   const shortcuts = Object.freeze([
+    { action: 'capture-pause', key: 'F8', ctrl: true, shift: true, scope: 'global', label: 'Pausar o reanudar la grabación', binding: 'Ctrl + Shift + F8', accelerator: 'CommandOrControl+Shift+F8' },
     { action: 'capture-start', key: 'F9', ctrl: true, shift: true, scope: 'global', label: 'Iniciar la captura seleccionada', binding: 'Ctrl + Shift + F9', accelerator: 'CommandOrControl+Shift+F9' },
     { action: 'capture-stop', key: 'F10', ctrl: true, shift: true, scope: 'global', label: 'Detener la grabación o cancelar la cuenta atrás', binding: 'Ctrl + Shift + F10', accelerator: 'CommandOrControl+Shift+F10' },
     { action: 'show-window', key: 'F11', ctrl: true, shift: true, scope: 'global', label: 'Mostrar la ventana principal', binding: 'Ctrl + Shift + F11', accelerator: 'CommandOrControl+Shift+F11' },

@@ -6,6 +6,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   openAboutWindow: (section) => ipcRenderer.invoke('open-about-window', section),
   getKeyboardShortcuts: () => ipcRenderer.invoke('get-keyboard-shortcuts'),
   getSaveDirectory: () => ipcRenderer.invoke('get-save-directory'),
+  getDiskSpace: () => ipcRenderer.invoke('get-disk-space'),
   chooseSaveDirectory: () => ipcRenderer.invoke('choose-save-directory'),
   resetSaveDirectory: () => ipcRenderer.invoke('reset-save-directory'),
   getStartWithWindows: () => ipcRenderer.invoke('get-start-with-windows'),
@@ -13,7 +14,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   setCompactMode: (compact) => ipcRenderer.invoke('set-compact-mode', compact),
   setCompactSettingsOpen: (expanded, requestedHeight) => ipcRenderer.invoke('set-compact-settings-open', expanded, requestedHeight),
   windowAction: (action) => ipcRenderer.invoke('window-action', action),
-  updateTrayCaptureState: (phase, paused) => ipcRenderer.invoke('update-tray-capture-state', phase, paused),
+  updateTrayCaptureState: (phase, paused, reason) => ipcRenderer.invoke('update-tray-capture-state', phase, paused, reason),
   onCompactModeToggle: (callback) => {
     if (typeof callback !== 'function') return () => {};
     const listener = () => callback();
@@ -28,9 +29,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   updateRegionHighlight: (region, frame) => ipcRenderer.invoke('update-region-highlight', region, frame),
   hideRegionHighlight: () => ipcRenderer.invoke('hide-region-highlight'),
   getCaptureFailure: () => ipcRenderer.invoke('get-capture-failure'),
-  beginRecording: (hasAudio) => ipcRenderer.invoke('begin-recording', hasAudio),
+  beginRecording: (hasAudio, options) => ipcRenderer.invoke('begin-recording', hasAudio, options),
   appendRecordingChunk: (id, chunk) => ipcRenderer.invoke('append-recording-chunk', id, chunk),
-  completeRecording: (id, hasAudio) => ipcRenderer.invoke('complete-recording', id, hasAudio),
+  completeRecording: (id, hasAudio, durationMs) => ipcRenderer.invoke('complete-recording', id, hasAudio, durationMs),
   saveRecording: (id, format) => ipcRenderer.invoke('save-recording', id, format),
   saveImage: (bytes, format, sourceName) => ipcRenderer.invoke('save-image', bytes, format, sourceName),
   onSaveProgress: (callback) => {
@@ -40,6 +41,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return () => ipcRenderer.removeListener('save-progress', listener);
   },
   discardRecording: (id) => ipcRenderer.invoke('discard-recording', id),
+  onDiskSpaceChanged: (callback) => {
+    if (typeof callback !== 'function') return () => {};
+    const listener = (_event, disk) => callback(disk);
+    ipcRenderer.on('disk-space-changed', listener);
+    return () => ipcRenderer.removeListener('disk-space-changed', listener);
+  },
   abortRecording: (id) => ipcRenderer.invoke('abort-recording', id),
   getRecoverySessions: () => ipcRenderer.invoke('get-recovery-sessions-main'),
   openRecoveryWindow: () => ipcRenderer.invoke('open-recovery-window'),

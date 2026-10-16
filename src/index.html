@@ -8,6 +8,11 @@
   <title>WinScreen Recorder — Captura local</title>
   <link rel="stylesheet" href="styles.css">
   <script src="keyboard-shortcuts.js" defer></script>
+  <script src="recording-pause.js" defer></script>
+  <script src="video-options.js" defer></script>
+  <script src="save-progress.js" defer></script>
+  <script src="audio-mix.js" defer></script>
+  <script src="capture-preferences.js" defer></script>
   <script src="renderer.js" defer></script>
 </head>
 <body>
@@ -84,7 +89,22 @@
           <label class="compact-audio-setting" for="compact-system-audio-toggle">
             <input id="compact-system-audio-toggle" type="checkbox" checked> Audio del sistema
           </label>
-            <p class="compact-local-note">Procesamiento local. Los cambios se reflejan en la vista completa.</p>
+          <label class="compact-setting-field" for="compact-quality-profile">Calidad
+            <select id="compact-quality-profile" class="compact-select"><option value="light">Ligero</option><option value="balanced">Equilibrado</option><option value="high">Alta calidad</option><option value="custom">Personalizado</option></select>
+          </label>
+          <label class="compact-setting-field" for="compact-frame-rate">FPS
+            <select id="compact-frame-rate" class="compact-select"><option value="15">15</option><option value="30">30</option><option value="60">60</option></select>
+          </label>
+          <label class="compact-setting-field" for="compact-microphone-device">Micrófono
+            <select id="compact-microphone-device" class="compact-select"><option value="">Predeterminado del sistema</option></select>
+          </label>
+          <label class="compact-setting-field" for="compact-microphone-volume">Volumen <output id="compact-microphone-volume-value">100 %</output>
+            <input id="compact-microphone-volume" type="range" min="0" max="200" value="100" step="5">
+          </label>
+          <div class="compact-setting-field"><button id="compact-test-microphone" class="secondary-button" type="button">Probar micrófono</button><meter id="compact-microphone-meter" min="0" max="100" value="0" aria-label="Nivel del micrófono"></meter></div>
+          <p id="compact-microphone-test-status" class="compact-local-note" role="status">Activa el micrófono y selecciona una fuente para probarlo.</p>
+          <p id="compact-disk-space-notice" class="compact-local-note" role="status">Consultando espacio disponible…</p>
+          <p class="compact-local-note">Procesamiento local. Los cambios se reflejan en la vista completa.</p>
           </div>
         </details>
 
@@ -92,6 +112,7 @@
           <button id="compact-recoveries" class="secondary-button compact-action" type="button" hidden>Recuperar</button>
           <button id="compact-start" class="primary-button compact-action compact-start" type="button" title="Iniciar grabación" aria-label="Iniciar grabación"><span class="record-icon" aria-hidden="true"></span>Grabar</button>
           <button id="compact-cancel-countdown" class="secondary-button compact-action" type="button" hidden>Cancelar</button>
+          <button id="compact-pause" class="secondary-button compact-action" type="button" aria-pressed="false" hidden>Pausar</button>
           <button id="compact-stop" class="stop-button compact-action" type="button" hidden>Detener</button>
           <button id="compact-save" class="primary-button compact-action" type="button" hidden>Guardar</button>
           <button id="compact-discard" class="quiet-button compact-action" type="button" hidden>Descartar</button>
@@ -164,6 +185,17 @@
         </select>
         <p class="field-hint">Conserva la proporción y no amplía fuentes pequeñas.</p>
 
+        <label class="field-label" for="quality-profile">Calidad de grabación</label>
+        <select id="quality-profile" class="select-control">
+          <option value="light">Ligero · 720p, 15 FPS</option>
+          <option value="balanced" selected>Equilibrado · 1080p, 30 FPS</option>
+          <option value="high">Alta calidad · original, 60 FPS</option>
+          <option value="custom">Personalizado</option>
+        </select>
+        <label class="field-label" for="frame-rate">Fotogramas por segundo</label>
+        <select id="frame-rate" class="select-control"><option value="15">15 FPS</option><option value="30" selected>30 FPS</option><option value="60">60 FPS</option></select>
+        <p id="quality-hint" class="field-hint">6 Mbps. La resolución y los FPS dependen de la fuente y del equipo.</p>
+
         <label class="field-label countdown-label" for="countdown-select">Cuenta atrás</label>
         <select id="countdown-select" class="select-control">
           <option value="0">Desactivada</option>
@@ -181,6 +213,7 @@
           </div>
         </div>
         <p class="field-hint">Al elegir una carpeta, las grabaciones se guardarán allí sin preguntar. Si el nombre ya existe, se agrega un número para conservar los archivos anteriores.</p>
+        <p id="disk-space-notice" class="field-hint" role="status" aria-live="polite">Consultando espacio disponible…</p>
 
         <label class="toggle-row" for="start-with-windows-toggle">
           <span class="toggle-copy"><span class="toggle-title">Iniciar con Windows</span><span class="toggle-detail">Abrir WinScreen Recorder al iniciar sesión</span></span>
@@ -196,6 +229,16 @@
           <input id="microphone-toggle" class="toggle-input" type="checkbox">
           <span class="toggle-switch" aria-hidden="true"></span>
         </label>
+
+        <div class="microphone-controls">
+          <label class="field-label" for="microphone-device">Entrada de micrófono</label>
+          <select id="microphone-device" class="select-control"><option value="">Predeterminado del sistema</option></select>
+          <label class="field-label" for="microphone-volume">Volumen del micrófono <output id="microphone-volume-value">100 %</output></label>
+          <input id="microphone-volume" type="range" min="0" max="200" value="100" step="5">
+          <button id="test-microphone" class="secondary-button" type="button">Probar micrófono</button>
+          <meter id="microphone-meter" min="0" max="100" value="0" aria-label="Nivel del micrófono"></meter>
+          <p id="microphone-test-status" class="field-hint" role="status" aria-live="polite">Activa el micrófono y selecciona una fuente para probarlo. No se reproduce tu voz.</p>
+        </div>
 
         <label class="toggle-row" for="system-audio-toggle" id="system-audio-row">
           <span class="toggle-copy"><span class="toggle-title">Audio del sistema</span><span class="toggle-detail">Incluir el sonido de Windows</span></span>
@@ -250,12 +293,13 @@
           </div>
 
           <div id="recording-actions" class="action-row" hidden>
-            <span class="recording-label"><span class="recording-dot" aria-hidden="true"></span> Grabando ahora</span>
+            <span id="recording-label" class="recording-label"><span class="recording-dot" aria-hidden="true"></span><span id="recording-copy" role="status" aria-live="polite">Grabando ahora</span></span>
+            <button id="pause-recording" class="secondary-button" type="button" aria-pressed="false">Pausar</button>
             <button id="stop-recording" class="stop-button" type="button"><span class="stop-icon" aria-hidden="true"></span> Detener</button>
           </div>
 
           <div id="save-actions" class="save-actions" hidden>
-            <div class="save-copy"><strong id="save-title">Tu captura está lista</strong><span id="save-description">Elige dónde guardarla. La transcripción con audio se generará automáticamente.</span><span id="save-progress" class="save-progress" role="status" aria-live="polite" hidden></span></div>
+            <div class="save-copy"><strong id="save-title">Tu captura está lista</strong><span id="save-description">Elige dónde guardarla. La transcripción con audio se generará automáticamente.</span><span id="save-progress" class="save-progress" role="status" aria-live="polite" hidden></span><progress id="save-progress-bar" max="100" aria-label="Progreso de guardado" hidden></progress></div>
             <div class="save-buttons">
               <button id="save-webm" class="secondary-button" type="button" hidden>Guardar original WebM</button>
               <button id="discard-recording" class="quiet-button" type="button">Descartar</button>

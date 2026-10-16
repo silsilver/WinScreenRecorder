@@ -8,6 +8,7 @@
   <title>Recuperar grabaciones — WinScreen Recorder</title>
   <link rel="stylesheet" href="recovery.css">
   <script src="keyboard-shortcuts.js" defer></script>
+  <script src="save-progress.js" defer></script>
   <script src="recovery.js" defer></script>
 </head>
 <body>
@@ -16,12 +17,13 @@
       <div>
         <p class="eyebrow">WINSCREEN RECORDER</p>
         <h1>Grabaciones por recuperar</h1>
-        <p class="intro-copy">Tus archivos siguen en este equipo. Elige una captura para continuar el guardado o descártala.</p>
+        <p class="intro-copy">Tus archivos siguen en este equipo. Continúa el guardado, reintenta los subtítulos pendientes o descarta el original de recuperación.</p>
       </div>
       <span class="recovery-count" id="recovery-count" aria-live="polite">—</span>
     </header>
 
     <p id="recovery-status" class="status-message" role="status" aria-live="polite" hidden></p>
+    <progress id="recovery-progress" max="100" aria-label="Progreso de recuperación" hidden></progress>
     <p id="recovery-error" class="error-message" role="alert" hidden></p>
     <section id="recovery-list" class="session-list" aria-label="Grabaciones pendientes" aria-busy="true">
       <div class="empty-state" id="loading-state">Buscando grabaciones…</div>

@@ -4,6 +4,7 @@
   const list = document.getElementById('recovery-list');
   const count = document.getElementById('recovery-count');
   const status = document.getElementById('recovery-status');
+  const progressBar = document.getElementById('recovery-progress');
   const error = document.getElementById('recovery-error');
   const empty = document.getElementById('recovery-empty');
   let sessions = [];
@@ -75,11 +76,10 @@
       heading.append(title);
 
       const state = document.createElement('span');
-      const label = session.manifestInvalid
-        ? 'Registro dañado'
-        : !session.mediaExists
-          ? 'Archivo no disponible'
-          : stateLabels[session.state] || 'Revisión necesaria';
+      let label = stateLabels[session.state] || 'Revisión necesaria';
+      if (!session.mediaExists) label = 'Archivo no disponible';
+      if (session.savedMediaPath) label = 'Video guardado; subtítulos pendientes';
+      if (session.manifestInvalid) label = 'Registro dañado';
       state.className = 'session-state';
       if (session.state === 'ready' || session.state === 'failed') state.classList.add('is-ready');
       if (session.state === 'unrecoverable' || !session.mediaExists || session.manifestInvalid) state.classList.add('is-error');
@@ -95,6 +95,12 @@
       heading.append(meta);
 
       card.append(heading, state);
+      if (session.savedMediaPath) {
+        const savedPath = document.createElement('p');
+        savedPath.className = 'session-meta';
+        savedPath.textContent = `Video guardado: ${session.savedMediaPath}`;
+        card.append(savedPath);
+      }
       const reasonText = session.manifestInvalid
         ? 'El registro de esta sesión no es válido. Puedes quitarlo de la lista; el archivo asociado no se borrará porque no se pudo validar su ubicación.'
         : session.blockedByActiveRecording
@@ -128,8 +134,8 @@
           format.append(option);
         }
         format.disabled = anyBusy;
-        controls.append(format);
-        controls.append(makeButton(isBusy ? 'Procesando…' : 'Continuar guardado', 'primary', async () => {
+        if (!session.savedMediaPath) controls.append(format);
+        controls.append(makeButton(isBusy ? 'Procesando…' : session.savedMediaPath ? 'Reintentar subtítulos' : 'Continuar guardado', 'primary', async () => {
           busyId = session.id;
           status.textContent = 'Preparando la grabación…';
           status.hidden = false;
@@ -139,8 +145,11 @@
             const result = await window.recoveryAPI.continue(session.id, format.value);
             if (result.status === 'saved') {
               status.textContent = result.subtitlePath
-                ? 'Video y transcripción guardados correctamente.'
-                : 'Video guardado correctamente.';
+                ? `Video y subtítulos guardados. Subtítulos: ${result.subtitlePath}`
+                : result.subtitlesPending
+                  ? `Video guardado en ${result.path}. Subtítulos pendientes: ${result.warning}`
+                  : 'Video guardado correctamente.';
+              if (result.warning && !result.subtitlesPending) status.textContent += ` ${result.warning}`;
               status.hidden = false;
               await refreshSessions();
             } else if (result.status !== 'cancelled') {
@@ -153,6 +162,7 @@
             error.hidden = false;
             await refreshSessions();
           } finally {
+            progressBar.hidden = true;
             busyId = null;
             renderSessions();
           }
@@ -208,8 +218,11 @@
   window.recoveryAPI.onSaveProgress((progress) => {
     const message = progressMessages[progress?.stage];
     if (!message) return;
-    status.textContent = message;
+    status.textContent = window.recorderSaveProgress.formatSaveProgress(progress, message);
     status.hidden = false;
+    progressBar.hidden = false;
+    if (Number.isFinite(progress.percent)) progressBar.value = progress.percent;
+    else progressBar.removeAttribute('value');
   });
   window.recoveryAPI.onSessionsChanged(refreshSessions);
   document.addEventListener('keydown', (event) => {

@@ -1,0 +1,21 @@
+'use strict';
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const { createAudioHealth } = require('../src/audio-health');
+test('audio warnings require sustained signal problems, reset on pause and distinguish channels', () => {
+  let time = 0;
+  const health = createAudioHealth({ now: () => time });
+  const levels = { microphone: { active: true, level: 0, peak: 0 }, system: { active: false } };
+  assert.deepEqual(health.update(levels), []);
+  time = 9999; assert.deepEqual(health.update(levels), []);
+  time = 10000; assert.match(health.update(levels)[0], /Micrófono.*sin señal/);
+  assert.deepEqual(health.update(levels, true), []);
+  time = 20000; assert.deepEqual(health.update(levels), []);
+  levels.microphone = { active: true, level: 75, peak: 100 };
+  health.update(levels); time += 700;
+  assert.match(health.update(levels)[0], /Micrófono.*volumen excesivo/);
+  levels.microphone = { active: true, level: 20, peak: 40 };
+  assert.deepEqual(health.update(levels), []);
+  levels.microphone.active = false; time += 15000;
+  assert.deepEqual(health.update(levels), []);
+});

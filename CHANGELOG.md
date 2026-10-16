@@ -1,5 +1,52 @@
 # Cambios
 
+## 1.8.0 — 2026-10-16
+
+### Añadido
+
+- **Protección de grabaciones prolongadas.** Solicita impedir la suspensión automática, sincroniza datos cada 15 segundos y finaliza ante el aviso de suspensión manual. Conserva y ofrece recuperar los fragmentos si falla la interfaz.
+- **Cancelación sin cerrar la aplicación.** Las ventanas principal, compacta, Biblioteca y Recuperación permiten detener procesos conservando originales y videos publicados.
+- **Medidores y avisos durante la grabación.** Separa micrófono y audio de Windows; avisa de silencio sostenido y volumen excesivo, excluyendo las pausas.
+- **Recorte visual.** Selecciona inicio y final con deslizadores y reproduce solo el fragmento antes de crear otra copia.
+- **Biblioteca organizada.** Muestra formato, duración y tamaño, conserva el orden elegido y permite nombres descriptivos sin cambiar archivos.
+- **Conversión acelerada.** Prueba hardware compatible y utiliza una alternativa por software ante fallos del codificador.
+
+### Corregido
+
+- **Salida durante conversión.** La cancelación impide iniciar otra conversión al cerrar durante un sondeo o una exportación acelerada.
+- **Confirmación después de escribir.** Espera el cierre y la sincronización final del archivo antes de confirmar una captura lista.
+- **Errores de destino.** Un disco lleno, un archivo de entrada inválido o permisos insuficientes no generan una segunda conversión completa.
+- **Búsqueda vacía.** La biblioteca informa cuando no hay coincidencias.
+- **Archivos movidos.** Actualizar la biblioteca vuelve a comprobar la vista previa y los controles del archivo seleccionado.
+
+### Validación
+
+- 65 pruebas automáticas aprobadas. Comprobaciones de sintaxis y de diferencias sin errores.
+- Ejecuciones de la aplicación por etapa: captura de tres minutos reales, sincronización, suspensión simulada, recuperación tras salida abrupta y fallo provocado de la interfaz, cancelación y reintento, recorte visual, nombres persistidos, orden y búsqueda.
+- Intel Quick Sync comprobado con FFmpeg real; alternativa por software tras fallo controlado, con salida decodificada. El cierre durante conversión no inicia otra exportación ni deja procesos o temporales.
+- Audio sintético con medidores, saturación, silencio de 10 segundos, pausa y liberación. Micrófono físico abierto y liberado sin guardar audio. No se validó reconocimiento de voz real, suspensión efectiva de Windows ni sesiones de varias horas.
+
+## 1.7.0 — 2026-10-16
+
+### Añadido
+
+- **Biblioteca de capturas.** Conserva hasta 100 entradas, con búsqueda, vista previa, apertura del archivo o carpeta e importación de archivos anteriores. Quitar del historial conserva los archivos.
+- **Recortes que conservan el original.** Genera otra copia MP4 y ajusta los subtítulos disponibles al intervalo elegido, sin sobrescribir archivos existentes.
+- **Atajos globales personalizables.** Guarda las combinaciones y restaura las anteriores si Windows rechaza alguna por conflicto.
+- **Parada por duración.** Finaliza y guarda al alcanzar el límite configurado, excluyendo las pausas.
+- **Avisos de señal.** Distingue una interrupción temporal de una desconexión y conserva la captura al finalizar una pista.
+
+### Corregido
+
+- **Salida durante un recorte.** Espera la cancelación y limpieza de la conversión antes de cerrar desde la bandeja.
+- **Tiempos con decimales.** Los controles de recorte aceptan las centésimas que proporciona el reproductor.
+- **Liberación de la vista previa.** Quitar la última entrada libera el reproductor y su archivo.
+
+### Validación
+
+- Ejecución de la aplicación real con perfil aislado: captura de ventana, pausa y reanudación, guardado, historial, recorte con FFmpeg y SRT, conservación del original, conflicto de atajos, temporizador de un minuto real y cierre de la ventana grabada con aviso y guardado.
+- Las pruebas de audio sintético cubren selección, volumen y liberación del micrófono. La comprobación con micrófonos físicos permanece pendiente.
+
 ## 1.6.0 — 2026-10-16
 
 ### Añadido

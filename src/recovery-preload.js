@@ -3,6 +3,7 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('recoveryAPI', {
+  cancel: () => ipcRenderer.invoke('cancel-recovery-operation'),
   list: () => ipcRenderer.invoke('get-recovery-sessions-window'),
   continue: (id, format) => ipcRenderer.invoke('continue-recovery', id, format),
   discard: (id) => ipcRenderer.invoke('discard-recovery', id),

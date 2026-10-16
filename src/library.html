@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; media-src 'self' file:; img-src 'self' file:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<title>Biblioteca — WinScreen Recorder</title><link rel="stylesheet" href="library.css"><script src="save-progress.js" defer></script><script src="library-presentation.js" defer></script><script src="library.js" defer></script></head>
+<body><main><header><div><p class="eyebrow">WINSCREEN RECORDER</p><h1>Biblioteca</h1><p>Capturas, recortes y atajos, en este equipo.</p></div><button id="refresh">Actualizar</button></header>
+<p id="notice" role="status" aria-live="polite"></p><p id="error" role="alert" hidden></p><progress id="progress" max="100" aria-label="Progreso del recorte" hidden></progress>
+<button id="cancel-process" type="button" hidden>Cancelar proceso</button>
+<p id="encoder-status" role="status"></p>
+<section aria-labelledby="captures-title"><div class="section-heading"><h2 id="captures-title">Capturas recientes</h2><button id="import">Agregar captura existente</button></div>
+<label for="search">Buscar por nombre o ruta</label><input id="search" type="search" placeholder="Buscar capturas…"><p id="empty" hidden>No hay capturas. Las nuevas se agregarán al guardarse; también puedes agregar archivos existentes.</p>
+<label for="sort">Ordenar capturas</label><select id="sort"><option value="newest">Más recientes</option><option value="oldest">Más antiguas</option><option value="name">Nombre</option><option value="size">Mayor tamaño</option><option value="duration">Mayor duración</option></select>
+<div class="library-grid"><div id="captures" aria-label="Lista de capturas"></div><article id="detail" hidden><h3 id="name"></h3><p id="path"></p>
+<p id="metadata"></p><form id="rename-form"><label for="capture-name">Nombre en la biblioteca</label><div class="rename-fields"><input id="capture-name" maxlength="120" required><button type="submit">Guardar nombre</button></div><small>El nombre del archivo y su ubicación se conservan.</small></form>
+<video id="preview" controls preload="metadata" hidden></video><img id="image-preview" alt="Vista previa de la captura" hidden>
+<p id="media-hint"></p><div class="actions"><button id="open">Abrir archivo</button><button id="folder">Ver en carpeta</button><button id="forget">Quitar del historial</button></div>
+<form id="trim-form" hidden><h3>Crear un recorte</h3><p>Se guarda una copia MP4 junto al original. Los subtítulos se ajustan si están disponibles.</p><div class="time-fields"><label>Inicio (segundos)<input id="start" type="number" min="0" step="0.01" value="0" required></label><label>Final (segundos)<input id="end" type="number" min="0.1" step="0.01" required></label></div>
+<div class="trim-timeline"><label for="range-start">Inicio del fragmento<input id="range-start" type="range" min="0" max="0" step="0.01" value="0" disabled></label><label for="range-end">Final del fragmento<input id="range-end" type="range" min="0" max="0" step="0.01" value="0" disabled></label><p id="trim-summary" role="status"></p></div>
+<div class="actions"><button id="mark-start" type="button">Usar posición como inicio</button><button id="mark-end" type="button">Usar posición como final</button><button id="preview-trim" type="button">Reproducir fragmento</button><button id="trim" type="submit" class="primary">Guardar copia recortada</button></div></form></article></div></section>
+<section aria-labelledby="shortcuts-title"><h2 id="shortcuts-title">Atajos globales</h2><p>Usa Ctrl o Alt, opcionalmente Shift, y una letra, número o F1–F24. Si existe un conflicto se conservan los atajos anteriores.</p>
+<form id="shortcuts-form"><div id="shortcut-fields"></div><div class="actions"><button id="save-shortcuts" class="primary" type="submit">Guardar atajos</button><button id="reset-shortcuts" type="button">Restaurar predeterminados</button></div></form></section>
+</main></body></html>

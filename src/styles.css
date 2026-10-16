@@ -348,3 +348,10 @@ body.compact-mode.compact-settings-expanded .compact-toolbar { height: 112px; mi
   .recovery-notice-copy { flex-basis: calc(100% - 50px); }
   .recovery-notice-button { margin-left: 46px; }
 }
+
+.recording-audio { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; font-size: 12px; }
+.recording-audio label { display: flex; gap: 8px; align-items: center; }
+.recording-audio meter { width: 96px; }
+.recording-audio [role=status] { color: #fbbf24; flex-basis: 100%; }
+
+#compact-recording-audio { max-width: 240px; font-size: 9px; gap: 0 8px; } #compact-recording-audio meter { width: 40px; } #compact-audio-health { max-width: 230px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; line-height: 12px; }

@@ -94,6 +94,8 @@
     recordingId: null,
     audioContext: null,
     audioMix: null,
+    trackMonitor: null,
+    recordingLimitMs: 0,
     countdownTimer: null,
     timerInterval: null,
     startedAt: 0,
@@ -291,6 +293,7 @@
   async function loadKeyboardShortcuts() {
     try {
       const shortcuts = await window.electronAPI.getKeyboardShortcuts();
+      window.recorderKeyboard.setGlobalShortcuts(shortcuts);
       registeredGlobalShortcuts = new Set(shortcuts.filter((item) => item.scope === 'global' && item.registered).map((item) => item.action));
       const controls = {
         'capture-start': [elements.start, elements.compactStart],
@@ -399,6 +402,8 @@
   }
 
   const saveProgressMessages = {
+    'encoder-probe': 'Comprobando aceleración disponible…',
+    'software-fallback': 'La aceleración falló; continuando con la conversión compatible…',
     'model-download': 'Descargando el modelo local de transcripción…',
     'audio-preparation': 'Preparando el audio para transcribir…',
     transcription: 'Transcribiendo en este equipo…',
@@ -429,9 +434,20 @@
 
   function updateTimer() {
     const pausedDuration = state.pauseController?.getPausedDuration() || 0;
-    const totalSeconds = Math.max(0, Math.floor(((state.stoppedAt ?? Date.now()) - state.startedAt - pausedDuration) / 1000));
+    const totalSeconds = Math.max(0, Math.floor(((state.stoppedAt ?? performance.now()) - state.startedAt - pausedDuration) / 1000));
     elements.timer.textContent = `${Math.floor(totalSeconds / 60).toString().padStart(2, '0')}:${(totalSeconds % 60).toString().padStart(2, '0')}`;
     elements.compactTimer.textContent = elements.timer.textContent;
+    if (state.phase === 'recording' && !state.stopping && state.recordingLimitMs > 0
+      && (state.stoppedAt ?? performance.now()) - state.startedAt - pausedDuration >= state.recordingLimitMs) {
+      showCaptureAlert('Grabación finalizada al alcanzar el tiempo programado.');
+      requestStopRecording();
+    }
+  }
+
+  function showCaptureAlert(message) {
+    const notice = document.getElementById('capture-alert');
+    notice.textContent = message; notice.hidden = !message;
+    if (message && document.body.classList.contains('compact-mode')) setStatus(message, 'busy');
   }
 
   function syncTrayCaptureState() {
@@ -466,6 +482,10 @@
 
   function setPhase(phase) {
     state.phase = phase;
+    for (const id of ['recording-audio', 'compact-recording-audio']) document.getElementById(id).hidden = phase !== 'recording' || !state.hasAudio;
+    for (const id of ['cancel-process', 'compact-cancel-process']) {
+      const control = document.getElementById(id); control.hidden = phase !== 'saving'; control.disabled = false;
+    }
     if (phase !== 'saving') elements.saveProgressBar.hidden = true;
     capturePreferences?.syncAvailability();
     syncTrayCaptureState();
@@ -841,7 +861,7 @@
       audio: wantsSystemAudio
     });
     let audioContextReady = Promise.resolve();
-    if (wantsMicrophone) {
+    if (wantsMicrophone || wantsSystemAudio) {
       state.audioContext = new AudioContext();
       audioContextReady = state.audioContext.resume();
     }
@@ -872,9 +892,7 @@
 
     const audioTracks = [...systemTracks, ...microphoneTracks];
     const combinedTracks = [...videoTracks];
-    if (!wantsMicrophone && audioTracks.length === 1) {
-      combinedTracks.push(audioTracks[0]);
-    } else if (wantsMicrophone) {
+    if (audioTracks.length > 0) {
       state.audioMix = window.recorderAudio.createAudioMix({ context: state.audioContext, systemTracks, microphoneStream: state.microphoneStream, gain: capturePreferences.getGain() });
       combinedTracks.push(...state.audioMix.stream.getAudioTracks());
       capturePreferences.startMeter(state.audioMix);
@@ -1063,6 +1081,7 @@
   }
 
   function stopTracks() {
+    state.trackMonitor?.dispose(); state.trackMonitor = null;
     capturePreferences?.stopMeter();
     state.audioMix?.dispose();
     state.audioMix = null;
@@ -1088,6 +1107,7 @@
   async function startCountdownAndRecord() {
     if (state.phase !== 'idle' || !state.selectedSourceId || !state.captureConfigReady) return;
     capturePreferences.stopPreview();
+    showCaptureAlert('');
     state.phase = 'preparing';
     setPhase('preparing');
     setStatus('Solicitando acceso a la captura…', 'busy');
@@ -1170,6 +1190,8 @@
     if (!mimeType) throw new Error('Este sistema no ofrece un formato WebM compatible para grabar.');
 
     const videoOptions = capturePreferences.getVideoOptions();
+    state.recordingLimitMs = capturePreferences.getLimitMs();
+    if (state.captureStream.getTracks().some((track) => track.readyState !== 'live')) throw new Error('Una fuente dejó de estar disponible antes de comenzar.');
     state.recordingId = await window.electronAPI.beginRecording(state.hasAudio, videoOptions);
     state.chunkQueue = Promise.resolve();
     state.pendingChunkBytes = 0;
@@ -1177,7 +1199,7 @@
     state.stopping = false;
     state.stoppedAt = null;
     state.mediaRecorder = new MediaRecorder(state.captureStream, { mimeType, videoBitsPerSecond: videoOptions.videoBitsPerSecond });
-    state.pauseController = window.recorderPause.createRecordingPauseController({ recorder: state.mediaRecorder, onChange: syncRecordingPauseState });
+    state.pauseController = window.recorderPause.createRecordingPauseController({ recorder: state.mediaRecorder, now: () => performance.now(), onChange: syncRecordingPauseState });
     state.mediaRecorder.addEventListener('pause', syncTrayCaptureState);
     state.mediaRecorder.addEventListener('resume', syncTrayCaptureState);
     state.mediaRecorder.addEventListener('dataavailable', (event) => {
@@ -1200,16 +1222,23 @@
       requestStopRecording();
     }, { once: true });
     state.mediaRecorder.addEventListener('stop', finishMediaRecording, { once: true });
-    state.captureStream.getVideoTracks()[0].addEventListener('ended', requestStopRecording, { once: true });
-    state.displayStream.getVideoTracks()[0].addEventListener('ended', requestStopRecording, { once: true });
 
     state.mediaRecorder.start(1000);
-    state.startedAt = Date.now();
+    state.startedAt = performance.now();
     state.timerInterval = window.setInterval(updateTimer, 250);
     updateTimer();
     state.phase = 'recording';
     setPhase('recording');
     syncRecordingPauseState();
+    const tracked = [
+      ...state.captureStream.getVideoTracks().filter((track) => !state.displayStream.getVideoTracks().includes(track)).map((track) => ({ track, label: 'La región de captura' })),
+      ...state.displayStream.getVideoTracks().map((track) => ({ track, label: 'La pantalla o ventana' })),
+      ...state.displayStream.getAudioTracks().map((track) => ({ track, label: 'El audio del sistema' })),
+      ...(state.microphoneStream?.getAudioTracks() || []).map((track) => ({ track, label: 'El micrófono' }))
+    ];
+    state.trackMonitor = window.recorderControls.watchCaptureTracks(tracked,
+      (labels) => { if (state.phase === 'recording') showCaptureAlert(labels.length ? `${labels.join(', ')} sin señal temporalmente. La grabación continúa.` : ''); },
+      (label) => { if (state.phase === 'recording') { showCaptureAlert(`${label} se desconectó. Se finaliza la grabación para conservarla.`); requestStopRecording(); } });
   }
 
   function requestStopRecording() {
@@ -1219,7 +1248,7 @@
   function stopRecording() {
     if (!['recording', 'finalizing'].includes(state.phase) || state.stopping) return;
     state.stopping = true;
-    state.stoppedAt = Date.now();
+    state.stoppedAt = performance.now();
     state.pauseController?.stop();
     updateTimer();
     state.phase = 'finalizing';
@@ -1233,7 +1262,7 @@
   }
 
   async function finishMediaRecording() {
-    state.stoppedAt ??= Date.now();
+    state.stoppedAt ??= performance.now();
     state.pauseController?.stop();
     stopTracks();
     await state.chunkQueue;
@@ -1270,7 +1299,7 @@
 
     try {
       const completedId = state.recordingId;
-      const durationMs = Math.max(0, (state.stoppedAt ?? Date.now()) - state.startedAt - (state.pauseController?.getPausedDuration() || 0));
+      const durationMs = Math.max(0, (state.stoppedAt ?? performance.now()) - state.startedAt - (state.pauseController?.getPausedDuration() || 0));
       await window.electronAPI.completeRecording(completedId, state.hasAudio, durationMs);
       await clearCaptureSelection();
       state.phase = 'ready';
@@ -1313,6 +1342,7 @@
       const result = await window.electronAPI.saveRecording(state.recordingId, format);
       if (result.status === 'saved') {
         state.recordingId = null;
+        void loadEncoderStatus();
         state.phase = 'idle';
         setPhase('idle');
         elements.saveWebm.hidden = true;
@@ -1345,7 +1375,7 @@
         setStatus('Error al guardar');
       } else {
         elements.saveTitle.textContent = 'Tu captura está lista';
-        elements.saveDescription.textContent = 'Guardado cancelado. La captura sigue disponible.';
+        elements.saveDescription.textContent = result.message || 'Guardado cancelado. La captura sigue disponible.';
         elements.saveProgress.hidden = true;
         setStatus('Guardado cancelado');
       }
@@ -1555,6 +1585,11 @@
     elements.systemAudio.dispatchEvent(new Event('change'));
   });
   elements.save.addEventListener('click', () => saveCurrentRecording(elements.format.value));
+  for (const id of ['cancel-process', 'compact-cancel-process']) document.getElementById(id).addEventListener('click', async () => {
+    for (const control of ['cancel-process', 'compact-cancel-process']) document.getElementById(control).disabled = true;
+    try { await window.electronAPI.cancelOperation(); }
+    catch (error) { elements.saveDescription.textContent = error.message; }
+  });
   elements.saveWebm.addEventListener('click', () => saveCurrentRecording('webm'));
   const showRecoveryWindow = () => {
     window.electronAPI.openRecoveryWindow().catch((error) => {
@@ -1578,11 +1613,34 @@
     }
   });
 
+  const audioHealth = window.recorderAudioHealth.createAudioHealth();
   const capturePreferences = window.createCapturePreferences({
+    onAudioLevels: (levels) => {
+      if (!levels || state.phase !== 'recording') audioHealth.reset();
+      for (const [channel, suffix] of [['microphone', 'mic'], ['system', 'system']]) {
+        for (const prefix of ['', 'compact-']) {
+          const meter = document.getElementById(`${prefix}live-${suffix}`);
+          meter.value = levels?.[channel]?.level || 0;
+          meter.parentElement.hidden = !levels?.[channel]?.active;
+        }
+      }
+      const message = levels && state.phase === 'recording' ? audioHealth.update(levels, state.mediaRecorder?.state === 'paused').join(' ') : '';
+      for (const id of ['audio-health', 'compact-audio-health']) {
+        const notice = document.getElementById(id); if (notice.textContent !== message) { notice.textContent = message; notice.title = message; }
+      }
+    },
     canEdit: () => state.phase === 'idle' && elements.captureMode.value === 'video',
     canTestMicrophone: () => state.phase === 'idle' && state.captureConfigReady && elements.captureMode.value === 'video' && elements.microphone.checked
   });
+  for (const id of ['open-library', 'compact-library']) document.getElementById(id).addEventListener('click', () => {
+    void window.electronAPI.openLibrary().catch((error) => setStatus(error.message));
+  });
+  window.electronAPI.onKeyboardShortcutsChanged(() => { void loadKeyboardShortcuts(); });
   let diskCheckPending = false;
+  async function loadEncoderStatus() {
+    try { const info = await window.electronAPI.getEncoderStatus(); document.getElementById('encoder-status').textContent = `Conversión: ${info.label || 'automática'}.`; } catch {}
+  }
+  void loadEncoderStatus();
   async function updateDiskNotice(suppliedStatus = null) {
     if (diskCheckPending) return;
     diskCheckPending = true;
@@ -1609,6 +1667,12 @@
   window.electronAPI.onDiskSpaceChanged((disk) => {
     if (disk.level === 'critical' && state.phase === 'recording') requestStopRecording();
     void updateDiskNotice(disk);
+  });
+  window.electronAPI.onSystemSuspend(() => {
+    if (state.phase === 'recording') {
+      showCaptureAlert('Windows va a suspenderse. Se finaliza la grabación para conservarla.');
+      requestStopRecording();
+    } else if (state.phase === 'countdown') cancelCountdown();
   });
   window.setInterval(() => { if (state.phase === 'idle') void updateDiskNotice(); }, 5000);
   void updateDiskNotice();

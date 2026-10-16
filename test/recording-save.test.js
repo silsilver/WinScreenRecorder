@@ -32,6 +32,7 @@ async function withPipeline(run) {
       fs, fsp, path, recordingSession: session, recoveryStore: store,
       chooseUniqueMediaPath, mainWindow: null, conversions: 0, transcripts: 0,
       requireDiskSpace: async () => {},
+      addCaptureToHistory: async () => null,
       transcriptError: null, conversionError: null,
       refreshTrayMenu() {}, notifySaveProgress() {}, async notifyRecoverySessionsChanged() {},
       safeCaptureFileName: (name) => name,

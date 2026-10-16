@@ -9,6 +9,11 @@
   const empty = document.getElementById('recovery-empty');
   let sessions = [];
   let busyId = null;
+  const cancel = document.getElementById('cancel-process');
+  cancel.addEventListener('click', async () => {
+    cancel.disabled = true;
+    try { await window.recoveryAPI.cancel(); } catch (caught) { error.textContent = caught.message; error.hidden = false; }
+  });
 
   const stateLabels = {
     recording: 'Captura interrumpida',
@@ -59,6 +64,7 @@
   }
 
   function renderSessions() {
+    cancel.hidden = busyId === null; cancel.disabled = false;
     list.replaceChildren();
     count.textContent = String(sessions.length);
     empty.hidden = sessions.length > 0;
@@ -152,7 +158,11 @@
               if (result.warning && !result.subtitlesPending) status.textContent += ` ${result.warning}`;
               status.hidden = false;
               await refreshSessions();
-            } else if (result.status !== 'cancelled') {
+            } else if (result.status === 'cancelled') {
+              status.textContent = 'Proceso cancelado. El original se conserva para reintentar.';
+              status.hidden = false;
+              await refreshSessions();
+            } else {
               error.textContent = result.message || 'No se pudo completar el guardado. El original se conserva para reintentar.';
               error.hidden = false;
               await refreshSessions();
@@ -209,6 +219,8 @@
   }
 
   const progressMessages = {
+    'encoder-probe': 'Comprobando aceleración disponible…',
+    'software-fallback': 'La aceleración falló; continuando con la conversión compatible…',
     'model-download': 'Descargando el modelo local de transcripción…',
     'audio-preparation': 'Preparando el audio para transcribir…',
     transcription: 'Transcribiendo en este equipo…',

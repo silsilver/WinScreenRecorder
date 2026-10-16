@@ -1,4 +1,4 @@
-const { app, BrowserWindow, desktopCapturer, dialog, globalShortcut, ipcMain, Menu, nativeImage, screen, session, Tray } = require('electron');
+const { app, BrowserWindow, desktopCapturer, dialog, globalShortcut, ipcMain, Menu, nativeImage, powerMonitor, powerSaveBlocker, screen, session, shell, Tray } = require('electron');
 const { spawn, execFile } = require('node:child_process');
 const { promisify } = require('node:util');
 const fs = require('node:fs');
@@ -8,6 +8,7 @@ const https = require('node:https');
 const { createHash, randomUUID } = require('node:crypto');
 const { pipeline } = require('node:stream/promises');
 const { Transform } = require('node:stream');
+const { once } = require('node:events');
 const { fileURLToPath } = require('node:url');
 const { allowMicrophoneRequest } = require('./src/permission-policy');
 const { createRecoveryStore } = require('./src/recording-recovery');
@@ -18,9 +19,14 @@ const { chooseUniqueMediaPath } = require('./src/save-paths');
 const { normalizeVideoOptions, normalizeDuration } = require('./src/video-options');
 const { createFfmpegProgressParser, createDownloadProgressReporter } = require('./src/save-progress');
 const { readDiskSpace, requireDiskSpace } = require('./src/disk-space');
+const { createCaptureHistory, validateMediaPath } = require('./src/capture-history');
+const { createLibraryService } = require('./src/library-service');
+const { createEncoderPolicy } = require('./src/video-encoder');
+const { resolveShortcuts, readShortcutSettings, writeShortcutSettings } = require('./src/shortcut-settings');
 const { mapRegionToBounds } = require('./src/region-geometry');
 const { mapPhysicalRectToDisplay } = require('./src/window-geometry');
 const execFileAsync = promisify(execFile);
+const fsyncAsync = promisify(fs.fsync);
 
 const rendererPath = path.join(__dirname, 'src', 'index.html');
 const recoveryRendererPath = path.join(__dirname, 'src', 'recovery.html');
@@ -73,6 +79,13 @@ let choosingSaveDirectory = false;
 let showAfterStartup = false;
 let updateExitRequested = false;
 const registeredKeyboardShortcuts = new Map();
+let currentKeyboardShortcuts = keyboardShortcuts;
+let libraryWindow = null;
+let captureHistory = null;
+let libraryService = null;
+let shortcutUpdatePending = false;
+let activeCancellation = null;
+const libraryRendererPath = path.join(__dirname, 'src', 'library.html');
 
 const modelConfig = {
   filename: 'ggml-base-q5_1.bin',
@@ -80,6 +93,17 @@ const modelConfig = {
   sha256: '422f1ae452ade6f30a004d7e5c6a43195e4433bc370bf23fac9cc591f01a8898'
 };
 const MODEL_DOWNLOAD_MAX_BYTES = 100 * 1024 * 1024;
+const encoderPolicy = createEncoderPolicy({
+  probe: async (encoder) => {
+    notifySaveProgress('encoder-probe');
+    try {
+      await runChildProcess(getFfmpegPath(), ['-nostdin', '-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'color=c=black:s=160x120:r=15',
+        '-frames:v', '3', '-c:v', encoder, '-pix_fmt', 'yuv420p', '-f', 'null', '-'], 'Prueba de aceleración', null, 5000);
+      return true;
+    } catch (error) { if (activeCancellation?.cancelled) throw error; return false; }
+  },
+  onFallback: () => notifySaveProgress('software-fallback')
+});
 
 function isTrustedRenderer(event) {
   if (!mainWindow || event.sender !== mainWindow.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) {
@@ -142,8 +166,8 @@ function getAppInformation() {
 }
 
 function getKeyboardShortcutInfo() {
-  return keyboardShortcuts.map(({ action, label, binding, scope }) => ({
-    action, label, binding, scope,
+  return currentKeyboardShortcuts.map(({ action, label, binding, scope, key, ctrl, shift, alt }) => ({
+    action, label, binding, scope, key, ctrl, shift, alt: Boolean(alt),
     registered: scope === 'global' ? registeredKeyboardShortcuts.get(action) === true : null
   }));
 }
@@ -682,6 +706,17 @@ function makeWindow() {
   });
 
   mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  mainWindow.webContents.on('render-process-gone', async () => {
+    if (isPreparingQuit || recordingSession?.status !== 'recording') return;
+    const window = mainWindow;
+    const interrupted = recordingSession;
+    try { await preserveCurrentSession(interrupted.id); }
+    catch (error) {
+      if (recordingSession === interrupted) recordingSession = null;
+      console.error('No se pudo finalizar la recuperación tras cerrar la interfaz:', error.message);
+    }
+    if (mainWindow === window && !window.isDestroyed() && !isPreparingQuit) window.reload();
+  });
   mainWindow.on('maximize', () => { windowMaximized = true; });
   mainWindow.on('unmaximize', () => { windowMaximized = false; });
   mainWindow.webContents.on('will-navigate', (event, destination) => {
@@ -801,7 +836,7 @@ function openAboutWindow(section = 'overview') {
 }
 
 function dispatchCaptureShortcut(action) {
-  if (!['capture-start', 'capture-stop', 'capture-pause'].includes(action) || choosingSaveDirectory || closePromptOpen || isPreparingQuit || updateExitRequested) return;
+  if (!['capture-start', 'capture-stop', 'capture-pause'].includes(action) || shortcutUpdatePending || choosingSaveDirectory || closePromptOpen || isPreparingQuit || updateExitRequested) return;
   if (!mainWindow || mainWindow.isDestroyed()) return;
   const script = `document.dispatchEvent(new CustomEvent('recorder-keyboard-action', { detail: ${JSON.stringify(action)} }));`;
   const dispatch = () => {
@@ -813,7 +848,7 @@ function dispatchCaptureShortcut(action) {
 }
 
 function registerKeyboardShortcuts() {
-  for (const shortcut of keyboardShortcuts.filter((item) => item.scope === 'global')) {
+  for (const shortcut of currentKeyboardShortcuts.filter((item) => item.scope === 'global')) {
     const callback = () => {
       if (choosingSaveDirectory || closePromptOpen || isPreparingQuit || updateExitRequested) return;
       if (shortcut.action === 'show-window') showMainWindow();
@@ -825,6 +860,104 @@ function registerKeyboardShortcuts() {
     registeredKeyboardShortcuts.set(shortcut.action, registered);
     if (!registered) console.warn(`Atajo global no disponible: ${shortcut.binding}`);
   }
+}
+
+function makeLibraryWindow() {
+  if (libraryWindow && !libraryWindow.isDestroyed()) { libraryWindow.show(); libraryWindow.focus(); return; }
+  const window = new BrowserWindow({ width: 1060, height: 780, minWidth: 760, minHeight: 600, show: false,
+    backgroundColor: '#111827', autoHideMenuBar: true,
+    webPreferences: { preload: path.join(__dirname, 'src', 'library-preload.js'), contextIsolation: true, nodeIntegration: false, sandbox: true } });
+  libraryWindow = window;
+  window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  window.webContents.on('will-navigate', (event, url) => {
+    try { if (path.resolve(fileURLToPath(url)) !== path.resolve(libraryRendererPath)) event.preventDefault(); } catch { event.preventDefault(); }
+  });
+  window.on('closed', () => { if (libraryWindow === window) libraryWindow = null; });
+  window.once('ready-to-show', () => window.show());
+  window.loadFile(libraryRendererPath);
+}
+
+async function addCaptureToHistory(record) {
+  if (!captureHistory) return null;
+  try {
+    await captureHistory.add(record);
+    if (libraryWindow && !libraryWindow.isDestroyed()) libraryWindow.webContents.send('library-changed');
+    return null;
+  } catch (error) { return `El archivo se guardó, pero no se pudo actualizar el historial: ${error.message}`; }
+}
+
+async function updateKeyboardShortcuts(settings) {
+  if (shortcutUpdatePending || recordingSession || activeSavePromise) throw new Error('Termina la captura, el guardado o la actualización de atajos actual.');
+  const next = resolveShortcuts(keyboardShortcuts, settings);
+  shortcutUpdatePending = true;
+  const previous = currentKeyboardShortcuts;
+  const unregister = () => {
+    for (const shortcut of currentKeyboardShortcuts.filter((item) => item.scope === 'global')) {
+      if (registeredKeyboardShortcuts.get(shortcut.action)) globalShortcut.unregister(shortcut.accelerator);
+    }
+    registeredKeyboardShortcuts.clear();
+  };
+  unregister();
+  currentKeyboardShortcuts = next;
+  registerKeyboardShortcuts();
+  try {
+    const conflict = next.find((item) => item.scope === 'global' && !registeredKeyboardShortcuts.get(item.action));
+    if (conflict) throw new Error(`El atajo ${conflict.binding} no está disponible. Se conservan los anteriores.`);
+    await writeShortcutSettings(path.join(app.getPath('userData'), 'keyboard-shortcuts.json'), settings);
+  } catch (error) { unregister(); currentKeyboardShortcuts = previous; registerKeyboardShortcuts(); throw error; }
+  finally { shortcutUpdatePending = false; }
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('keyboard-shortcuts-changed');
+  if (aboutWindow && !aboutWindow.isDestroyed()) aboutWindow.webContents.reload();
+  return getKeyboardShortcutInfo();
+}
+
+async function runLibraryTask(operation) {
+  if (recordingSession || activeSavePromise || shortcutUpdatePending || choosingSaveDirectory || isPreparingQuit) throw new Error('Termina primero la captura o el guardado actual.');
+  const previous = recoverySaveOwner;
+  recoverySaveOwner = libraryWindow;
+  const cancellation = { owner: libraryWindow, cancelled: false };
+  activeCancellation = cancellation;
+  const task = Promise.resolve().then(operation);
+  activeSavePromise = task;
+  refreshTrayMenu();
+  try { return await task; }
+  catch (error) { if (cancellation.cancelled) return { status: 'cancelled' }; throw error; }
+  finally { activeSavePromise = null; if (activeCancellation === cancellation) activeCancellation = null; recoverySaveOwner = previous; traySaveStage = null; refreshTrayMenu(); }
+}
+
+async function cancelActiveOperation(owner) {
+  const cancellation = activeCancellation;
+  if (!cancellation || cancellation.owner !== owner || !activeSavePromise) return false;
+  cancellation.cancelled = true;
+  if (recordingSession?.status === 'saving') recordingSession.cancelRequested = true;
+  if (downloadRequest) downloadRequest.destroy(new Error('Proceso cancelado. El original se conserva.'));
+  if (activeChildProcess && !activeChildProcess.killed) activeChildProcess.kill();
+  await activeSavePromise.catch(() => {});
+  return true;
+}
+
+async function importHistoryCapture() {
+  const result = await dialog.showOpenDialog(libraryWindow, { title: 'Agregar captura al historial', properties: ['openFile'],
+    filters: [{ name: 'Capturas', extensions: ['mp4', 'mkv', 'webm', 'gif', 'png', 'jpg'] }] });
+  if (result.canceled || !result.filePaths[0]) return null;
+  const mediaPath = validateMediaPath(result.filePaths[0]);
+  const stat = await fsp.lstat(mediaPath);
+  if (!stat.isFile() || stat.isSymbolicLink() || stat.size === 0) throw new Error('El archivo no es una captura válida.');
+  let durationMs = null;
+  let hasAudio = false;
+  if (['.mp4', '.mkv', '.webm'].includes(path.extname(mediaPath).toLowerCase())) {
+    try { await runChildProcess(getFfmpegPath(), ['-nostdin', '-hide_banner', '-i', mediaPath], 'FFmpeg'); }
+    catch (error) {
+      const match = /Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)/.exec(error.message);
+      if (match) durationMs = (Number(match[1]) * 3600 + Number(match[2]) * 60 + Number(match[3])) * 1000;
+      hasAudio = /Audio:/.test(error.message);
+    }
+  }
+  const subtitlePath = getSubtitlePath(mediaPath);
+  if (activeCancellation?.cancelled) throw new Error('Importación cancelada.');
+  let subtitlesAvailable = false;
+  try { const subtitleStat = await fsp.lstat(subtitlePath); subtitlesAvailable = subtitleStat.isFile() && !subtitleStat.isSymbolicLink(); } catch {}
+  return captureHistory.add({ path: mediaPath, name: path.basename(mediaPath), durationMs, hasAudio, subtitlePath: subtitlesAvailable ? subtitlePath : null });
 }
 
 function restoreFullWindowState() {
@@ -943,6 +1076,7 @@ async function requestAppExit() {
         noLink: true
       });
       if (response !== 1) return;
+      if (activeCancellation) activeCancellation.cancelled = true;
       const currentSession = recordingSession;
       if (currentSession.status === 'recording') {
         const preserved = await new Promise((resolve) => {
@@ -975,6 +1109,12 @@ async function requestAppExit() {
     } finally {
       closePromptOpen = false;
     }
+  }
+  if (!recordingSession && activeSavePromise) {
+    closePromptOpen = true;
+    try { await retainSessionBeforeQuit(); }
+    catch (error) { dialog.showErrorBox('No se pudo salir', error.message); return; }
+    finally { closePromptOpen = false; }
   }
   allowWindowClose = true;
   allowQuitAfterPreservation = true;
@@ -1071,7 +1211,7 @@ function configureCaptureHandler() {
 }
 
 async function createRecordingSession(hasAudio, videoOptions = {}) {
-  if (recordingSession || activeSavePromise) throw new Error('Ya existe una grabación activa o pendiente de guardar.');
+  if (shortcutUpdatePending || recordingSession || activeSavePromise) throw new Error('Ya existe una grabación o una actualización de controles en curso.');
   const id = randomUUID();
   if (!recoveryStore) throw new Error('El sistema de recuperación todavía no está listo.');
   const saveDirectory = await getSaveDirectoryStatus();
@@ -1088,7 +1228,7 @@ async function createRecordingSession(hasAudio, videoOptions = {}) {
     videoOptions: normalizeVideoOptions(videoOptions)
   });
   const filePath = recoveryRecord.mediaPath;
-  const stream = fs.createWriteStream(filePath, { flags: 'r+' });
+  const stream = fs.createWriteStream(filePath, { flags: 'r+', flush: true });
   try {
     await new Promise((resolve, reject) => {
       stream.once('open', resolve);
@@ -1107,6 +1247,7 @@ async function createRecordingSession(hasAudio, videoOptions = {}) {
     status: 'recording',
     writeChain: Promise.resolve(),
     writeError: null,
+    lastCheckpoint: performance.now(),
     recoveryManaged: true,
     recoveryRecord
   };
@@ -1115,6 +1256,8 @@ async function createRecordingSession(hasAudio, videoOptions = {}) {
     refreshTrayMenu();
   });
   recordingSession = currentSession;
+  const wakeLock = powerSaveBlocker.start('prevent-app-suspension');
+  stream.once('close', () => { if (powerSaveBlocker.isStarted(wakeLock)) powerSaveBlocker.stop(wakeLock); });
   refreshTrayMenu();
   return id;
 }
@@ -1133,25 +1276,30 @@ function enqueueChunk(currentSession, chunk) {
   currentSession.writeChain = currentSession.writeChain.then(() => new Promise((resolve, reject) => {
     if (currentSession.writeError) return reject(currentSession.writeError);
     currentSession.stream.write(bytes, (error) => error ? reject(error) : resolve());
-  }));
+  })).then(async () => {
+    if (performance.now() - currentSession.lastCheckpoint >= 15000) {
+      await fsyncAsync(currentSession.stream.fd);
+      currentSession.lastCheckpoint = performance.now();
+    }
+  });
   return currentSession.writeChain;
 }
 
 async function closeRecordingStream(currentSession) {
   await currentSession.writeChain;
   if (currentSession.writeError) throw currentSession.writeError;
-  await new Promise((resolve, reject) => {
-    currentSession.stream.once('error', reject);
-    currentSession.stream.end(resolve);
-  });
+  const closed = once(currentSession.stream, 'close');
+  currentSession.stream.end();
+  await closed;
+  if (currentSession.writeError) throw currentSession.writeError;
   currentSession.status = 'ready';
 }
 
-function getOutputOptions(format, hasAudio, videoOptions = {}) {
+function getOutputOptions(format, hasAudio, videoOptions = {}, encoder = 'libopenh264') {
   if (format === 'mp4' || format === 'mkv') {
     return [
       '-map', '0:v:0', '-map', '0:a:0?',
-      '-c:v', 'libopenh264', '-b:v', String(normalizeVideoOptions(videoOptions).videoBitsPerSecond), '-pix_fmt', 'yuv420p',
+      '-c:v', encoder, '-b:v', String(normalizeVideoOptions(videoOptions).videoBitsPerSecond), '-pix_fmt', 'yuv420p',
       ...(hasAudio ? ['-c:a', 'aac', '-b:a', '160k'] : ['-an']),
       ...(format === 'mp4' ? ['-movflags', '+faststart'] : [])
     ];
@@ -1165,20 +1313,28 @@ function getOutputOptions(format, hasAudio, videoOptions = {}) {
   throw new Error('El formato de salida seleccionado no está permitido.');
 }
 
-function runChildProcess(executablePath, args, label, onStdout = null) {
+function runChildProcess(executablePath, args, label, onStdout = null, timeoutMs = 0) {
   return new Promise((resolve, reject) => {
+    const cancellation = activeCancellation;
+    if (cancellation?.cancelled) { reject(new Error('Proceso cancelado. El original se conserva.')); return; }
     const child = spawn(executablePath, args, { windowsHide: true, stdio: ['ignore', onStdout ? 'pipe' : 'ignore', 'pipe'] });
     if (onStdout) child.stdout.on('data', (data) => onStdout(data.toString()));
     activeChildProcess = child;
+    let timedOut = false;
+    const timeout = timeoutMs > 0 ? setTimeout(() => { timedOut = true; child.kill(); }, timeoutMs) : null;
     let stderr = '';
     child.stderr.on('data', (data) => { stderr = `${stderr}${data.toString()}`.slice(-8000); });
     child.once('error', (error) => {
+      clearTimeout(timeout);
       if (activeChildProcess === child) activeChildProcess = null;
       reject(new Error(`No se pudo iniciar ${label}: ${error.message}`));
     });
     child.once('close', (code) => {
+      clearTimeout(timeout);
       if (activeChildProcess === child) activeChildProcess = null;
-      if (code === 0) resolve();
+      if (cancellation?.cancelled) reject(new Error('Proceso cancelado. El original se conserva.'));
+      else if (timedOut) reject(new Error(`${label} superó el tiempo de espera.`));
+      else if (code === 0) resolve();
       else reject(new Error(stderr.trim() || `${label} terminó con el código ${code}.`));
     });
   });
@@ -1186,11 +1342,13 @@ function runChildProcess(executablePath, args, label, onStdout = null) {
 
 async function runFfmpeg(inputPath, outputPath, format, hasAudio, videoOptions = {}, durationMs = null) {
   const parseProgress = createFfmpegProgressParser(durationMs, (progress) => notifySaveProgress('conversion', progress));
-  await runChildProcess(getFfmpegPath(), [
+  const convert = (encoder) => runChildProcess(getFfmpegPath(), [
     '-nostdin', '-hide_banner', '-loglevel', 'error', '-y', '-i', inputPath,
     '-progress', 'pipe:1', '-stats_period', '0.5',
-    ...getOutputOptions(format, hasAudio, videoOptions), outputPath
+    ...getOutputOptions(format, hasAudio, videoOptions, encoder), outputPath
   ], 'FFmpeg', parseProgress);
+  if (format === 'mp4' || format === 'mkv') await encoderPolicy.encode(convert, () => activeCancellation?.cancelled === true);
+  else await convert('libopenh264');
   notifySaveProgress('conversion', { percent: 100 });
 }
 
@@ -1353,9 +1511,12 @@ async function continueRecovery(id, format, ownerWindow) {
   if (recordingSession) throw new Error('Termina o conserva primero la grabación que está abierta en la ventana principal.');
   const previousProgressOwner = recoverySaveOwner;
   recoverySaveOwner = ownerWindow;
+  const cancellation = { owner: ownerWindow, cancelled: false };
+  activeCancellation = cancellation;
   traySaveStage = 'recovery';
   const operation = (async () => {
     const currentSession = await loadRecoveryRecording(id);
+    if (cancellation.cancelled) return { status: 'cancelled' };
     if (currentSession.status === 'unrecoverable') throw new Error('Esta grabación no se pudo recuperar.');
     recordingSession = currentSession;
     currentSession.status = 'saving';
@@ -1379,6 +1540,7 @@ async function continueRecovery(id, format, ownerWindow) {
     return await operation;
   } finally {
     if (activeSavePromise === operation) activeSavePromise = null;
+    if (activeCancellation === cancellation) activeCancellation = null;
     recoverySaveOwner = previousProgressOwner;
     traySaveStage = null;
     refreshTrayMenu();
@@ -1390,6 +1552,9 @@ async function saveRecording(id, format, ownerWindow = mainWindow, suppliedSessi
   if (activeSavePromise) throw new Error('Ya se está guardando otra grabación. Inténtalo cuando termine.');
   const previousProgressOwner = recoverySaveOwner;
   recoverySaveOwner = ownerWindow;
+  const cancellation = { owner: ownerWindow, cancelled: false };
+  activeCancellation = cancellation;
+  if ((suppliedSession || recordingSession)?.status === 'ready') (suppliedSession || recordingSession).cancelRequested = false;
   const operation = saveRecordingCore(id, format, ownerWindow, suppliedSession);
   activeSavePromise = operation;
   refreshTrayMenu();
@@ -1397,6 +1562,7 @@ async function saveRecording(id, format, ownerWindow = mainWindow, suppliedSessi
     return await operation;
   } finally {
     if (activeSavePromise === operation) activeSavePromise = null;
+    if (activeCancellation === cancellation) activeCancellation = null;
     recoverySaveOwner = previousProgressOwner;
     traySaveStage = null;
     refreshTrayMenu();
@@ -1489,12 +1655,17 @@ async function saveRecordingCore(id, format, ownerWindow, suppliedSession) {
       currentSession.status = 'ready';
       const failureStage = stage === 'conversion' ? 'conversion' : 'finalizing';
       const failureCode = stage === 'conversion' ? 'conversion-failed' : 'finalization-failed';
-      await setRecoverySessionState(currentSession, 'failed', failureStage, failureCode).catch(() => {});
+      await setRecoverySessionState(currentSession, currentSession.cancelRequested ? 'ready' : 'failed',
+        currentSession.cancelRequested ? null : failureStage, currentSession.cancelRequested ? null : failureCode).catch(() => {});
       currentSession.status = 'ready';
       if (ownerWindow && ownerWindow !== mainWindow) {
         recordingSession = null;
         await notifyRecoverySessionsChanged();
       }
+    }
+    if (currentSession.cancelRequested) {
+      currentSession.cancelRequested = false;
+      return { status: 'cancelled', message: 'Proceso cancelado. La captura se conserva para reintentar.' };
     }
     if (stage === 'conversion') return { status: 'conversion-failed', message: error.message, canSaveWebm: true };
     return { status: 'save-failed', message: error.message, canSaveWebm: true };
@@ -1542,6 +1713,9 @@ async function finishRecordingSubtitles(currentSession, targetPath) {
     }
   }
   if (currentSession.subtitleTempPath) await fsp.rm(path.dirname(currentSession.subtitleTempPath), { recursive: true, force: true }).catch(() => {});
+  const historyWarning = await addCaptureToHistory({ path: targetPath, name: currentSession.sourceName, subtitlePath: subtitleTargetPath,
+    durationMs: currentSession.recoveryRecord?.durationMs || null, hasAudio: currentSession.hasAudio });
+  if (historyWarning) warning = [warning, historyWarning].filter(Boolean).join(' ');
   currentSession.temporarySubtitle = null;
   if (recordingSession === currentSession) recordingSession = null;
   await notifyRecoverySessionsChanged();
@@ -1591,7 +1765,8 @@ async function saveImage(input, format, sourceName) {
   try {
     await fsp.writeFile(temporaryPath, imageBytes, { flag: 'wx' });
     await fsp.rename(temporaryPath, targetPath);
-    return { status: 'saved', path: targetPath };
+    const warning = await addCaptureToHistory({ path: targetPath, name: sourceName, subtitlePath: null, hasAudio: false, durationMs: null });
+    return { status: 'saved', path: targetPath, warning };
   } catch (error) {
     await fsp.rm(temporaryPath, { force: true }).catch(() => {});
     throw new Error(`No se pudo guardar la imagen: ${error.message}`);
@@ -1679,10 +1854,9 @@ async function preserveCurrentSession(id, failureCode = 'capture-write-failed') 
       currentSession.stream.destroy();
       await closed;
     } else {
-      await new Promise((resolve) => {
-        currentSession.stream.once('error', resolve);
-        currentSession.stream.end(resolve);
-      });
+      const closed = once(currentSession.stream, 'close');
+      currentSession.stream.end();
+      await closed;
     }
   }
   if (currentSession.recoveryManaged && recoveryStore) {
@@ -1697,6 +1871,26 @@ async function preserveCurrentSession(id, failureCode = 'capture-write-failed') 
 }
 
 function registerIpcHandlers() {
+  registerHandler('get-encoder-status', () => encoderPolicy.status());
+  registerHandler('cancel-operation', () => cancelActiveOperation(mainWindow));
+  registerHandler('open-library', async () => { makeLibraryWindow(); return true; });
+  const registerLibrary = (channel, handler) => ipcMain.handle(channel, async (event, ...args) => {
+    let trusted = false;
+    try { trusted = libraryWindow && event.sender === libraryWindow.webContents && event.senderFrame === libraryWindow.webContents.mainFrame
+      && path.resolve(fileURLToPath(event.senderFrame.url)) === path.resolve(libraryRendererPath); } catch {}
+    if (!trusted) throw new Error('Solicitud de Biblioteca rechazada: origen no confiable.');
+    return handler(...args);
+  });
+  registerLibrary('library-list', () => libraryService.list());
+  registerLibrary('library-open', (id, folder) => libraryService.open(id, folder === true));
+  registerLibrary('library-forget', (id) => libraryService.forget(id));
+  registerLibrary('library-import', () => runLibraryTask(importHistoryCapture));
+  registerLibrary('library-rename', (id, name) => libraryService.rename(id, name));
+  registerLibrary('library-encoder-status', () => encoderPolicy.status());
+  registerLibrary('library-cancel', () => cancelActiveOperation(libraryWindow));
+  registerLibrary('library-trim', (id, start, end) => runLibraryTask(() => libraryService.trim(id, start, end)));
+  registerLibrary('library-shortcuts', getKeyboardShortcutInfo);
+  registerLibrary('library-save-shortcuts', (settings) => updateKeyboardShortcuts(settings));
   registerHandler('get-developer-info', getAppInformation);
   registerHandler('open-about-window', async (section = 'overview') => {
     openAboutWindow(section);
@@ -1889,6 +2083,7 @@ function registerIpcHandlers() {
   });
 
   registerRecoveryHandler('get-recovery-sessions-window', async () => getRecoverySummaries());
+  registerRecoveryHandler('cancel-recovery-operation', () => cancelActiveOperation(recoveryWindow));
   registerRecoveryHandler('continue-recovery', async (id, format, ownerWindow) => continueRecovery(id, format, ownerWindow));
   registerRecoveryHandler('discard-recovery', async (id) => {
     if (!recoveryStore) throw new Error('El sistema de recuperación todavía no está listo.');
@@ -1913,10 +2108,23 @@ const shouldStartApplication = configureAppLifecycle({
   }
 });
 
-if (shouldStartApplication) app.whenReady().then(() => {
+if (shouldStartApplication) app.whenReady().then(async () => {
   if (updateExitRequested) { app.quit(); return; }
   migrateWindowsLoginItem();
   recoveryStore = createRecoveryStore({ userDataPath: app.getPath('userData') });
+  captureHistory = createCaptureHistory(app.getPath('userData'));
+  libraryService = createLibraryService({ history: captureHistory, shell, checkSpace: requireDiskSpace,
+    checkCancelled: () => { if (activeCancellation?.cancelled) throw new Error('Recorte cancelado. El original se conserva.'); },
+    convertClip: async (record, target, clip) => {
+      notifySaveProgress('conversion');
+      const progress = createFfmpegProgressParser(clip.durationMs, (value) => notifySaveProgress('conversion', value));
+      await encoderPolicy.encode((encoder) => runChildProcess(getFfmpegPath(), ['-nostdin', '-hide_banner', '-loglevel', 'error', '-y', '-ss', String(clip.start), '-i', record.path,
+        '-t', String(clip.end - clip.start), '-progress', 'pipe:1', '-stats_period', '0.5', ...getOutputOptions('mp4', record.hasAudio, {}, encoder), target], 'FFmpeg', progress), () => activeCancellation?.cancelled === true);
+      notifySaveProgress('conversion', { percent: 100 });
+    }
+  });
+  try { currentKeyboardShortcuts = resolveShortcuts(keyboardShortcuts, await readShortcutSettings(path.join(app.getPath('userData'), 'keyboard-shortcuts.json'))); }
+  catch (error) { console.warn(`Se usarán los atajos predeterminados: ${error.message}`); }
   let diskMonitorBusy = false;
   setInterval(async () => {
     const current = recordingSession;
@@ -1934,6 +2142,11 @@ if (shouldStartApplication) app.whenReady().then(() => {
   makeWindow();
   configureCaptureHandler();
   registerIpcHandlers();
+  powerMonitor.on('suspend', () => {
+    if (recordingSession?.status === 'recording' && mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('system-suspend');
+    }
+  });
   getRecoverySummaries().then((sessions) => refreshTrayMenu(sessions.length)).catch(() => {});
   registerKeyboardShortcuts();
 });
@@ -1948,8 +2161,15 @@ function cleanupAppForQuit() {
 }
 
 async function retainSessionBeforeQuit() {
+  if (activeCancellation) activeCancellation.cancelled = true;
   const currentSession = recordingSession;
-  if (!currentSession) return;
+  if (!currentSession) {
+    if (activeSavePromise) {
+      if (activeChildProcess && !activeChildProcess.killed) activeChildProcess.kill();
+      await activeSavePromise.catch(() => {});
+    }
+    return;
+  }
   if (currentSession.status === 'recording') {
     const preserved = await new Promise((resolve) => {
       preserveRecordingForExitResolve = resolve;

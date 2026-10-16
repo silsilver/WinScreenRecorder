@@ -21,6 +21,10 @@
     { action: 'refresh-recovery', key: 'F5', ctrl: false, shift: false, scope: 'recovery', label: 'Actualizar la lista de recuperaciones', binding: 'F5' }
   ].map(Object.freeze));
 
+  let activeShortcuts = shortcuts;
+  function setGlobalShortcuts(values) {
+    activeShortcuts = shortcuts.map((item) => item.scope !== 'global' ? item : ({ ...item, ...(values.find((value) => value.action === item.action) || {}) }));
+  }
   function isTextTarget(target) {
     if (!target) return false;
     if (target.isContentEditable || target.tagName === 'TEXTAREA') return true;
@@ -29,22 +33,22 @@
   }
 
   function findShortcut(event, { scope = 'main', registeredGlobals = new Set() } = {}) {
-    if (event.defaultPrevented || event.repeat || event.isComposing || event.altKey || event.metaKey) return null;
+    if (event.defaultPrevented || event.repeat || event.isComposing || event.metaKey || event.getModifierState?.('AltGraph')) return null;
     const key = String(event.key || '').toLowerCase();
     const code = String(event.code || '');
-    return shortcuts.find((item) => {
+    return activeShortcuts.find((item) => {
       if (item.scope !== scope && !(scope === 'main' && item.scope === 'global')) return false;
       if (item.scope === 'global' && registeredGlobals.has(item.action)) return false;
       const matchesKey = item.key.toLowerCase() === key
         || (item.key === '1' && code === 'Digit1')
         || (item.key === '2' && code === 'Digit2')
         || (item.key === ',' && code === 'Comma');
-      return matchesKey && Boolean(event.ctrlKey) === item.ctrl && Boolean(event.shiftKey) === item.shift
+      return matchesKey && Boolean(event.ctrlKey) === item.ctrl && Boolean(event.shiftKey) === item.shift && Boolean(event.altKey) === Boolean(item.alt)
         && (item.allowInText || !isTextTarget(event.target));
     }) || null;
   }
 
-  const api = Object.freeze({ shortcuts, findShortcut });
+  const api = Object.freeze({ shortcuts, findShortcut, setGlobalShortcuts });
   if (typeof module === 'object' && module.exports) module.exports = api;
   else window.recorderKeyboard = api;
 })();

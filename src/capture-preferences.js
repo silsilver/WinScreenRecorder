@@ -1,15 +1,16 @@
 'use strict';
 
-window.createCapturePreferences = ({ canEdit, canTestMicrophone }) => {
+window.createCapturePreferences = ({ canEdit, canTestMicrophone, onAudioLevels = () => {} }) => {
   const get = (id) => document.getElementById(id);
   const profile = get('quality-profile');
   const fps = get('frame-rate');
   const size = get('video-size-select');
   const device = get('microphone-device');
   const volume = get('microphone-volume');
+  const limit = get('recording-limit');
   const test = get('test-microphone');
   const status = get('microphone-test-status');
-  const pairs = [[profile, get('compact-quality-profile')], [fps, get('compact-frame-rate')], [device, get('compact-microphone-device')], [volume, get('compact-microphone-volume')]];
+  const pairs = [[profile, get('compact-quality-profile')], [fps, get('compact-frame-rate')], [device, get('compact-microphone-device')], [volume, get('compact-microphone-volume')], [limit, get('compact-recording-limit')]];
   let bitrate = 6000000;
   let preview = null;
   let previewVersion = 0;
@@ -20,7 +21,7 @@ window.createCapturePreferences = ({ canEdit, canTestMicrophone }) => {
   const storageKey = 'winscreen-capture-preferences-v1';
 
   function save() {
-    try { localStorage.setItem(storageKey, JSON.stringify({ profile: profile.value, size: size.value, frameRate: Number(fps.value), videoBitsPerSecond: bitrate, device: device.value, volume: Number(volume.value) })); } catch {}
+    try { localStorage.setItem(storageKey, JSON.stringify({ profile: profile.value, size: size.value, frameRate: Number(fps.value), videoBitsPerSecond: bitrate, device: device.value, volume: Number(volume.value), limitMinutes: Number(limit.value) })); } catch {}
   }
   function syncValues() {
     for (const [primary, compact] of pairs) compact.value = primary.value;
@@ -41,12 +42,15 @@ window.createCapturePreferences = ({ canEdit, canTestMicrophone }) => {
     clearInterval(meterTimer);
     meterTimer = null; meterMix = null;
     for (const id of ['microphone-meter', 'compact-microphone-meter']) get(id).value = 0;
+    onAudioLevels(null);
   }
   function startMeter(mix) {
     stopMeter(); meterMix = mix;
     meterTimer = setInterval(() => {
-      const level = mix.getLevel();
+      const levels = mix.getLevels();
+      const level = levels.microphone.level;
       for (const id of ['microphone-meter', 'compact-microphone-meter']) get(id).value = level;
+      onAudioLevels(levels);
     }, 100);
   }
   function stopPreview() {
@@ -62,7 +66,7 @@ window.createCapturePreferences = ({ canEdit, canTestMicrophone }) => {
   }
   function syncAvailability() {
     const editable = canEdit();
-    for (const control of [profile, fps, get('compact-quality-profile'), get('compact-frame-rate')]) control.disabled = !editable;
+    for (const control of [profile, fps, limit, get('compact-recording-limit'), get('compact-quality-profile'), get('compact-frame-rate')]) control.disabled = !editable;
     for (const control of [device, volume, get('compact-microphone-device'), get('compact-microphone-volume')]) control.disabled = !editable || !get('microphone-toggle').checked;
     for (const button of [test, get('compact-test-microphone')]) button.disabled = starting || !canTestMicrophone();
     if (!canTestMicrophone()) stopPreview();
@@ -111,6 +115,7 @@ window.createCapturePreferences = ({ canEdit, canTestMicrophone }) => {
   }
 
   profile.addEventListener('change', applyProfile);
+  limit.addEventListener('change', () => { syncValues(); save(); });
   for (const control of [fps, size]) control.addEventListener('change', () => { profile.value = 'custom'; syncValues(); save(); });
   device.addEventListener('change', () => { stopPreview(); syncValues(); save(); });
   volume.addEventListener('input', () => { meterMix?.setGain(Number(volume.value) / 100); syncValues(); save(); });
@@ -126,6 +131,7 @@ window.createCapturePreferences = ({ canEdit, canTestMicrophone }) => {
       const options = window.recorderVideoOptions.normalizeVideoOptions(stored);
       if (!['original', '1080', '720', '480'].includes(stored.size)) throw new Error('Tamaño no válido');
       bitrate = options.videoBitsPerSecond; fps.value = String(options.frameRate); size.value = stored.size;
+      window.recorderControls.limitMilliseconds(stored.limitMinutes ?? 0); limit.value = String(stored.limitMinutes ?? 0);
       profile.value = Object.hasOwn(window.recorderVideoOptions.profiles, stored.profile) ? stored.profile : 'custom';
       volume.value = String(window.recorderAudio.normalizeMicrophoneGain(stored.volume / 100) * 100);
       if (typeof stored.device === 'string' && stored.device && stored.device.length < 512) device.add(new Option('Micrófono seleccionado', stored.device, true, true));
@@ -135,6 +141,7 @@ window.createCapturePreferences = ({ canEdit, canTestMicrophone }) => {
   return {
     stopPreview, startMeter, stopMeter, syncAvailability, microphoneConstraints,
     getGain: () => Number(volume.value) / 100,
+    getLimitMs: () => window.recorderControls.limitMilliseconds(Number(limit.value)),
     getVideoOptions: () => window.recorderVideoOptions.normalizeVideoOptions({ frameRate: Number(fps.value), videoBitsPerSecond: bitrate })
   };
 };

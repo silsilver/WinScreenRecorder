@@ -1,11 +1,20 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('electronAPI', {
+  getEncoderStatus: () => ipcRenderer.invoke('get-encoder-status'),
+  cancelOperation: () => ipcRenderer.invoke('cancel-operation'),
+  onSystemSuspend: (callback) => { ipcRenderer.on('system-suspend', () => callback()); },
   getSources: () => ipcRenderer.invoke('get-sources'),
   getDeveloperInfo: () => ipcRenderer.invoke('get-developer-info'),
   openAboutWindow: (section) => ipcRenderer.invoke('open-about-window', section),
   getKeyboardShortcuts: () => ipcRenderer.invoke('get-keyboard-shortcuts'),
   getSaveDirectory: () => ipcRenderer.invoke('get-save-directory'),
+  openLibrary: () => ipcRenderer.invoke('open-library'),
+  onKeyboardShortcutsChanged: (callback) => {
+    const listener = () => callback();
+    ipcRenderer.on('keyboard-shortcuts-changed', listener);
+    return () => ipcRenderer.removeListener('keyboard-shortcuts-changed', listener);
+  },
   getDiskSpace: () => ipcRenderer.invoke('get-disk-space'),
   chooseSaveDirectory: () => ipcRenderer.invoke('choose-save-directory'),
   resetSaveDirectory: () => ipcRenderer.invoke('reset-save-directory'),

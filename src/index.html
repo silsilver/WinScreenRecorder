@@ -9,9 +9,11 @@
   <link rel="stylesheet" href="styles.css">
   <script src="keyboard-shortcuts.js" defer></script>
   <script src="recording-pause.js" defer></script>
+  <script src="recording-controls.js" defer></script>
   <script src="video-options.js" defer></script>
   <script src="save-progress.js" defer></script>
   <script src="audio-mix.js" defer></script>
+  <script src="audio-health.js" defer></script>
   <script src="capture-preferences.js" defer></script>
   <script src="renderer.js" defer></script>
 </head>
@@ -22,7 +24,9 @@
         <div class="window-drag-handle compact-drag-handle" title="Arrastra desde aquí para mover la mini barra">
           <span aria-hidden="true">⠿</span><span>Mover mini barra</span>
         </div>
+        <div id="compact-recording-audio" class="recording-audio" hidden><label>Micrófono <meter id="compact-live-mic" min="0" max="100" value="0"></meter></label><label>Windows <meter id="compact-live-system" min="0" max="100" value="0"></meter></label><span id="compact-audio-health" role="status"></span></div>
         <div class="compact-window-actions topbar-actions">
+          <button id="compact-library" class="quiet-button compact-expand" type="button">Biblioteca</button>
           <button id="compact-expand" class="quiet-button compact-expand" type="button" title="Volver a la ventana completa">Vista completa</button>
           <div class="window-controls compact-window-controls" aria-label="Controles de ventana">
             <button class="window-control-button" type="button" data-window-action="minimize" title="Minimizar" aria-label="Minimizar">−</button>
@@ -104,9 +108,11 @@
           <div class="compact-setting-field"><button id="compact-test-microphone" class="secondary-button" type="button">Probar micrófono</button><meter id="compact-microphone-meter" min="0" max="100" value="0" aria-label="Nivel del micrófono"></meter></div>
           <p id="compact-microphone-test-status" class="compact-local-note" role="status">Activa el micrófono y selecciona una fuente para probarlo.</p>
           <p id="compact-disk-space-notice" class="compact-local-note" role="status">Consultando espacio disponible…</p>
+          <label class="compact-setting-field" for="compact-recording-limit">Detener a los (minutos; 0 sin límite)<input id="compact-recording-limit" type="number" min="0" max="1440" step="1" value="0"></label>
           <p class="compact-local-note">Procesamiento local. Los cambios se reflejan en la vista completa.</p>
           </div>
         </details>
+
 
         <div class="compact-actions">
           <button id="compact-recoveries" class="secondary-button compact-action" type="button" hidden>Recuperar</button>
@@ -115,6 +121,7 @@
           <button id="compact-pause" class="secondary-button compact-action" type="button" aria-pressed="false" hidden>Pausar</button>
           <button id="compact-stop" class="stop-button compact-action" type="button" hidden>Detener</button>
           <button id="compact-save" class="primary-button compact-action" type="button" hidden>Guardar</button>
+          <button id="compact-cancel-process" class="quiet-button compact-action" type="button" hidden>Cancelar proceso</button>
           <button id="compact-discard" class="quiet-button compact-action" type="button" hidden>Descartar</button>
         </div>
       </div>
@@ -195,6 +202,10 @@
         <label class="field-label" for="frame-rate">Fotogramas por segundo</label>
         <select id="frame-rate" class="select-control"><option value="15">15 FPS</option><option value="30" selected>30 FPS</option><option value="60">60 FPS</option></select>
         <p id="quality-hint" class="field-hint">6 Mbps. La resolución y los FPS dependen de la fuente y del equipo.</p>
+        <p id="encoder-status" class="field-hint">Conversión automática: se comprobará al exportar.</p>
+        <label class="field-label" for="recording-limit">Detener a los (minutos)</label>
+        <input id="recording-limit" class="select-control" type="number" min="0" max="1440" step="1" value="0">
+        <p class="field-hint">0 significa sin límite. Cuenta tiempo grabado, excluyendo pausas.</p>
 
         <label class="field-label countdown-label" for="countdown-select">Cuenta atrás</label>
         <select id="countdown-select" class="select-control">
@@ -297,10 +308,13 @@
             <button id="pause-recording" class="secondary-button" type="button" aria-pressed="false">Pausar</button>
             <button id="stop-recording" class="stop-button" type="button"><span class="stop-icon" aria-hidden="true"></span> Detener</button>
           </div>
+          <p id="capture-alert" class="field-hint disk-warning" role="alert" hidden></p>
+          <div id="recording-audio" class="recording-audio" hidden><label>Micrófono <meter id="live-mic" min="0" max="100" value="0"></meter></label><label>Audio de Windows <meter id="live-system" min="0" max="100" value="0"></meter></label><span id="audio-health" role="status"></span></div>
 
           <div id="save-actions" class="save-actions" hidden>
             <div class="save-copy"><strong id="save-title">Tu captura está lista</strong><span id="save-description">Elige dónde guardarla. La transcripción con audio se generará automáticamente.</span><span id="save-progress" class="save-progress" role="status" aria-live="polite" hidden></span><progress id="save-progress-bar" max="100" aria-label="Progreso de guardado" hidden></progress></div>
             <div class="save-buttons">
+              <button id="cancel-process" class="secondary-button" type="button" hidden>Cancelar proceso</button>
               <button id="save-webm" class="secondary-button" type="button" hidden>Guardar original WebM</button>
               <button id="discard-recording" class="quiet-button" type="button">Descartar</button>
               <button id="save-recording" class="primary-button" type="button">Guardar captura</button>
@@ -313,6 +327,7 @@
     <footer class="app-footer">
       <span>WinScreen Recorder <span class="footer-separator">·</span> Captura local, sin nube</span>
       <div class="footer-actions">
+        <button id="open-library" class="footer-button" type="button">Biblioteca y atajos</button>
         <button id="about-info-button" class="footer-button" type="button">Acerca de la aplicación</button>
         <button id="developer-info-button" class="footer-button" type="button">Desarrollador</button>
         <details class="license-details">

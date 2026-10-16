@@ -23,9 +23,15 @@ app.whenReady().then(async () => {
   await fs.writeFile(path.join(output, 'trace.log'), '');
   const trace = (message) => fsSync.appendFileSync(path.join(output, 'trace.log'), message + '\n');
   trace('start');
-  const view = new BrowserWindow({ show: false, width: 1040, height: 760, webPreferences: { sandbox: true, contextIsolation: true, backgroundThrottling: false } });
+  const view = new BrowserWindow({ show: true, width: 1040, height: 760, webPreferences: { sandbox: true, contextIsolation: true, backgroundThrottling: false } });
   const errors = [];
-  view.webContents.on('console-message', (_event, level, message) => { if (level === 3) errors.push(message); });
+  const screenshots = [];
+  view.webContents.on('console-message', (_event, level, message) => {
+    if (level === 3) errors.push(message);
+    if (message === '__WSR_COMPACT__true') view.setContentSize(760, 128);
+    if (message === '__WSR_COMPACT__false') view.setContentSize(1040, 760);
+    if (message === '__WSR_AUDIO_SCREENSHOT__') screenshots.push(view.webContents.capturePage().then((capture) => fs.writeFile(path.join(output, 'live-audio-compact.png'), capture.toPNG())));
+  });
   try {
     const html = (await fs.readFile(path.join(__dirname, '../src/index.html'), 'utf8'))
       .replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, '')
@@ -35,16 +41,17 @@ app.whenReady().then(async () => {
     await fs.writeFile(previewPath, html);
     await view.loadFile(previewPath);
     trace('html loaded');
-    for (const module of ['keyboard-shortcuts', 'recording-pause', 'video-options', 'save-progress', 'audio-mix', 'capture-preferences']) {
+    for (const module of ['keyboard-shortcuts', 'recording-pause', 'recording-controls', 'video-options', 'save-progress', 'audio-mix', 'audio-health', 'capture-preferences']) {
       await view.webContents.executeJavaScript((await fs.readFile(path.join(__dirname, '../src', `${module}.js`), 'utf8')) + '\n;void 0;');
       trace('module ' + module);
     }
     await view.webContents.executeJavaScript(`(${function () {
-      window.__check = { chunks: [], inputs: [], contexts: [], saved: false, errors: [] };
+      window.__check = { chunks: [], inputs: [], contexts: [], signalGains: [], saved: false, errors: [] };
       window.addEventListener('error', (event) => window.__check.errors.push(event.message));
       window.addEventListener('unhandledrejection', (event) => window.__check.errors.push(String(event.reason)));
       const capabilities = { systemAudioAvailable: true };
       window.electronAPI = new Proxy({
+        setCompactMode: async (enabled) => { console.log('__WSR_COMPACT__' + enabled); },
         getSources: async () => [{ id: 'screen:synthetic', name: 'Pantalla sintética', thumbnail: '', displayId: '1' }],
         configureCapture: async () => capabilities, clearCapture: async () => capabilities,
         getSaveDirectory: async () => ({ directory: 'Prueba aislada', available: true }),
@@ -69,9 +76,12 @@ app.whenReady().then(async () => {
         const oscillator = context.createOscillator();
         oscillator.frequency.value = 440;
         const destination = context.createMediaStreamDestination();
-        oscillator.connect(destination); oscillator.start();
+        const gain = context.createGain(); gain.gain.value = 0.2;
+        oscillator.connect(gain); gain.connect(destination); oscillator.start();
+        window.__check.signalGains.push(gain);
         window.__check.contexts.push(context);
         window.__check.inputs.push(destination.stream);
+        void context.resume();
         return destination.stream;
       };
       Object.defineProperty(navigator.mediaDevices, 'enumerateDevices', { value: async () => [{ kind: 'audioinput', deviceId: 'synthetic-mic', label: 'Micrófono sintético' }] });
@@ -105,7 +115,7 @@ app.whenReady().then(async () => {
       get('microphone-device').value = 'synthetic-mic'; get('microphone-device').dispatchEvent(new Event('change'));
       get('test-microphone').click();
       await until(() => get('test-microphone').textContent === 'Finalizar prueba');
-      await wait(250);
+      await until(() => get('microphone-meter').value > 10);
       const level = get('microphone-meter').value;
       assert(level > 10, 'Microphone meter has no signal');
       get('microphone-volume').value = '0'; get('microphone-volume').dispatchEvent(new Event('input'));
@@ -117,6 +127,25 @@ app.whenReady().then(async () => {
       get('countdown-select').value = '0';
       get('start-recording').click();
       await until(() => !get('recording-actions').hidden);
+      await until(() => get('live-mic').value > 1 && get('live-system').value > 1);
+      window.__check.signalGains.forEach((gain) => { gain.gain.value = 3; });
+      await until(() => get('audio-health').textContent.includes('volumen excesivo'));
+      get('compact-toggle').click();
+      await until(() => document.body.classList.contains('compact-mode')); await wait(200);
+      const row = get('compact-controls-row'); const title = document.querySelector('.compact-titlebar');
+      assert(row.scrollWidth <= row.clientWidth && title.scrollWidth <= title.clientWidth, 'Live audio overflows compact width');
+      assert(get('compact-toolbar').getBoundingClientRect().bottom <= innerHeight + 1, 'Live audio overflows compact height');
+      console.log('__WSR_AUDIO_SCREENSHOT__');
+      get('compact-expand').click(); await wait(200);
+      window.__check.clippingWarning = true;
+      window.__check.signalGains.forEach((gain) => { gain.gain.value = 0; });
+      await wait(10500);
+      assert(get('audio-health').textContent.includes('sin señal'), 'Sustained silence warning missing');
+      window.__check.silenceWarning = true;
+      get('pause-recording').click(); await wait(250);
+      assert(get('audio-health').textContent === '', 'Pause incorrectly reports silence');
+      window.__check.signalGains.forEach((gain) => { gain.gain.value = 0.2; });
+      get('pause-recording').click();
       await wait(500);
       get('pause-recording').click(); await wait(200); get('pause-recording').click();
       await wait(400);
@@ -131,15 +160,19 @@ app.whenReady().then(async () => {
       clearInterval(window.__check.paint);
       for (const context of window.__check.contexts) await context.close();
       return { options: window.__check.options, microphoneLevel: level, durationMs: window.__check.durationMs,
+        liveMeters: true, clippingWarning: window.__check.clippingWarning, silenceWarning: window.__check.silenceWarning,
         progress: window.__check.progress, errors: window.__check.errors, bytes: window.__check.chunks.flat() };
     }} )()`, true);
     if (result.errors.length || errors.length) throw new Error(JSON.stringify([...result.errors, ...errors]));
+    await Promise.all(screenshots);
     await fs.writeFile(path.join(output, 'capture.webm'), Buffer.from(result.bytes));
     delete result.bytes;
     const mainSource = await fs.readFile(path.join(__dirname, '../main.js'), 'utf8');
     const progress = [];
     const converter = vm.createContext({
-      spawn, normalizeVideoOptions, createFfmpegProgressParser, activeChildProcess: null,
+      spawn, normalizeVideoOptions, createFfmpegProgressParser, activeChildProcess: null, activeCancellation: null,
+      setTimeout, clearTimeout,
+      encoderPolicy: { encode: async (convert) => convert('libopenh264') },
       getFfmpegPath: () => path.join(__dirname, '../vendor/ffmpeg/ffmpeg.exe'),
       notifySaveProgress: (stage, value) => progress.push({ stage, ...value })
     });

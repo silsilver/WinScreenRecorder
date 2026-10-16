@@ -1,6 +1,6 @@
 {
   "name": "winscreen-recorder",
-  "version": "1.6.0",
+  "version": "1.8.0",
   "description": "Windows screen and window recorder to standard formats",
   "author": {
     "name": "Alan Suástegui Vázquez",
@@ -13,7 +13,7 @@
     "start": "npm run prepare:ffmpeg && npm run prepare:whisper && electron .",
     "prepare:ffmpeg": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/prepare-ffmpeg.ps1",
     "dist:win": "npm run prepare:ffmpeg && npm run prepare:whisper && electron-builder --win nsis --x64",
-    "check": "node --check main.js && node --check preload.js && node --check src/renderer.js && node --check src/recording-pause.js && node --check src/video-options.js && node --check src/save-progress.js && node --check src/disk-space.js && node --check src/audio-mix.js && node --check src/capture-preferences.js && node --check scripts/verify-capture-improvements.cjs && node --check scripts/verify-recording-pause.cjs && node --check src/keyboard-shortcuts.js && node --check src/app-lifecycle.js && node --check src/about-preload.js && node --check src/about.js && node --check src/tray-status.js && node --check src/recording-recovery.js && node --check src/recovery-preload.js && node --check src/recovery.js && node --check src/permission-policy.js && node --check src/save-paths.js && node --check src/region-geometry.js && node --check src/window-geometry.js && node --check src/region-overlay-preload.js && node --check src/region-overlay.js",
+    "check": "node --check main.js && node --check preload.js && node --check src/renderer.js && node --check src/recording-pause.js && node --check src/video-options.js && node --check src/save-progress.js && node --check src/disk-space.js && node --check src/audio-mix.js && node --check src/capture-preferences.js && node --check scripts/verify-capture-improvements.cjs && node --check scripts/verify-recording-pause.cjs && node --check src/keyboard-shortcuts.js && node --check src/app-lifecycle.js && node --check src/about-preload.js && node --check src/about.js && node --check src/tray-status.js && node --check src/recording-recovery.js && node --check src/recovery-preload.js && node --check src/recovery.js && node --check src/permission-policy.js && node --check src/save-paths.js && node --check src/region-geometry.js && node --check src/window-geometry.js && node --check src/region-overlay-preload.js && node --check src/region-overlay.js && node --check src/atomic-json.js && node --check src/capture-history.js && node --check src/clip-tools.js && node --check src/library-service.js && node --check src/library-preload.js && node --check src/library.js && node --check src/recording-controls.js && node --check src/shortcut-settings.js && node --check scripts/verify-app-functionality.cjs && node --check src/audio-health.js && node --check src/library-presentation.js && node --check src/video-encoder.js",
     "test": "node --test"
   },
   "devDependencies": {

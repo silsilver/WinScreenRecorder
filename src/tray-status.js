@@ -22,16 +22,18 @@ const SAVE_STAGE_LABELS = Object.freeze({
   finalizing: 'Guardando video y subtítulos'
 });
 
-function isValidTrayCaptureState(phase, paused) {
+function isValidTrayCaptureState(phase, paused, pauseReason = null) {
   return typeof phase === 'string'
     && Object.hasOwn(CAPTURE_PHASE_LABELS, phase)
     && typeof paused === 'boolean'
-    && (!paused || phase === 'recording');
+    && (!paused || phase === 'recording')
+    && (pauseReason === null || (paused && ['manual', 'writing'].includes(pauseReason)));
 }
 
 function getTrayStatusLabel({
   phase = 'idle',
   paused = false,
+  pauseReason = null,
   sessionStatus = null,
   saveActive = false,
   saveStage = null,
@@ -47,7 +49,8 @@ function getTrayStatusLabel({
   if (sessionStatus === 'recording') {
     if (captureWriteFailed) return 'Captura interrumpida';
     if (phase === 'finalizing') return CAPTURE_PHASE_LABELS.finalizing;
-    return paused ? 'Grabación en pausa: guardando datos' : CAPTURE_PHASE_LABELS.recording;
+    if (paused) return pauseReason === 'manual' ? 'Grabación en pausa manual' : 'Grabación en pausa: guardando datos';
+    return CAPTURE_PHASE_LABELS.recording;
   }
   if (sessionStatus === 'ready') {
     if (failureStage === 'transcription') return 'Transcripción pendiente de reintentar';

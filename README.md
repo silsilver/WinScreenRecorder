@@ -45,6 +45,7 @@ Los atajos globales funcionan con la aplicación abierta, aunque esté oculta o 
 
 | Atajo | Acción | Alcance |
 | --- | --- | --- |
+| Ctrl + Shift + F8 | Pausar o reanudar la grabación | Global |
 | Ctrl + Shift + F9 | Iniciar la captura seleccionada | Global |
 | Ctrl + Shift + F10 | Detener grabación o cancelar cuenta atrás | Global |
 | Ctrl + Shift + F11 | Mostrar la ventana principal | Global |
@@ -67,6 +68,11 @@ Consulta **Atajos de teclado** dentro de **Acerca de la aplicación**, al pie de
 
 ## Captura y formatos
 
+- **Calidad:** Ligero usa hasta 720p, 15 FPS y 2 Mbps; Equilibrado, hasta 1080p, 30 FPS y 6 Mbps; Alta calidad, tamaño original, hasta 60 FPS y 16 Mbps. Al cambiar resolución o FPS se muestra Personalizado. Son valores solicitados: el resultado depende de la fuente y del equipo. Los ajustes se conservan entre ejecuciones y cada recuperación mantiene la calidad con que se grabó.
+- **Micrófono:** activa el micrófono y selecciona una fuente para elegir una entrada y probar su nivel antes de grabar. El volumen admite 0–200 %; por encima del 100 % puede distorsionar. La prueba no reproduce ni guarda tu voz. Finaliza con el mismo botón y se libera al iniciar una captura, cambiar dispositivo, desactivar el micrófono u ocultar la ventana. Estos controles también están en Ajustes de la vista compacta.
+- **Espacio:** se muestra la capacidad libre del volumen de recuperación. Por debajo de 1 GiB aparece un aviso; al bajar de 256 MiB durante la grabación se solicita su finalización. Con espacio crítico no se inicia otra grabación ni se exporta al destino afectado. El original recuperable se conserva. Una consulta fallida se indica como espacio desconocido. El espacio libre no garantiza una duración concreta ni que quepa cualquier conversión.
+- **Progreso:** la descarga del modelo muestra porcentaje cuando el servidor informa el tamaño y alcanza 100 % después de comprobar su integridad. La conversión usa el avance real de FFmpeg y la duración grabada sin pausas. Las recuperaciones antiguas o interrumpidas sin duración muestran segundos procesados y una barra indeterminada. La transcripción informa su etapa, sin un porcentaje estimado.
+- Durante una grabación, **Pausar** y **Reanudar** están disponibles en las vistas normal y compacta, y mediante **Ctrl + Shift + F8** aunque la ventana esté oculta. El video y el audio se pausan juntos; el contador excluye las pausas. **Detener** permite finalizar y guardar desde la pausa. La bandeja identifica la pausa manual. Si aún se están escribiendo datos, reanudar espera a que la cola se vacíe lo suficiente. Una nueva grabación comienza sin pausas anteriores.
 - El selector permite capturar video o imagen. Las imágenes se guardan como PNG o JPG; conservan la selección de pantalla/ventana, el tamaño de salida y la cuenta atrás. El audio y la transcripción se usan solo para video.
 - Para capturar solo una parte, elige una pantalla y activa “Capturar una porción”. Arrastra sobre la vista previa para seleccionar el área; el recuadro se marca también sobre la tarjeta de la pantalla.
 - De manera predeterminada, las capturas se guardan en `Videos\WinScreenRecorder`; la carpeta se crea al iniciar. Se puede cambiar desde Configuración. Si el nombre ya existe, se genera otro con sufijo.
@@ -79,9 +85,10 @@ Consulta **Atajos de teclado** dentro de **Acerca de la aplicación**, al pie de
 - Los originales de recuperación permanecen en esa carpeta hasta que el video y sus subtítulos se guardan correctamente o se descartan desde la ventana de recuperación. Al elegir “Conservar y salir”, la aplicación finaliza la captura actual antes de cerrar.
 - Al pasar el cursor sobre el icono del área de notificación, se muestra el estado actual y la cantidad de grabaciones por recuperar. Su menú también muestra si la aplicación está lista, grabando, en pausa por escritura, transcribiendo, convirtiendo o guardando, incluso con las ventanas ocultas.
 - La opción **Acerca de la aplicación**, al pie de la ventana principal, abre una ventana independiente con la versión, el autor, las funciones, los formatos, las instrucciones de captura, la transcripción, la recuperación, los atajos de teclado y los requisitos de uso.
-- Cada guardado con audio genera automáticamente un archivo de subtítulos `.srt` junto al video. También se transcribe la captura si se guarda como WebM original o GIF; el SRT es independiente y puede reutilizarse con otros reproductores o editores. Las capturas sin audio se guardan sin SRT.
+- El video se guarda antes de generar los subtítulos `.srt`. Si la transcripción falla, el video queda disponible y la aplicación avisa que los subtítulos están pendientes. Desde **Grabaciones por recuperar**, pulsa **Reintentar subtítulos** para generar solo el SRT junto al video, incluso después de reiniciar. Si ya existe un SRT, se agrega un número para conservarlo. Si el video se movió o eliminó, se conserva el original y se permite volver a exportarlo.
+- También se transcribe la captura si se guarda como WebM original o GIF; el SRT es independiente y puede reutilizarse con otros reproductores o editores. Las capturas sin audio se guardan sin SRT. Descartar una sesión pendiente elimina su original de recuperación; el video ya guardado permanece intacto.
 - Cuando la pista de audio no contiene voz, el proceso se completa y el SRT puede quedar vacío.
-- La transcripción usa `whisper.cpp` localmente. El modelo multilingüe base cuantizado (aprox. 57 MiB) se descarga y valida la primera vez que se guarda una captura con audio; después queda disponible sin conexión. El audio nunca se envía a un servicio. Si la descarga o transcripción falla, el guardado no se completa y la captura se conserva para reintentar.
+- La transcripción usa `whisper.cpp` localmente. El modelo multilingüe base cuantizado (aprox. 57 MiB) se descarga y valida la primera vez que se guarda una captura con audio; después queda disponible sin conexión. El audio nunca se envía a un servicio. Si la descarga o transcripción falla, el video permanece guardado y el original de recuperación se conserva para reintentar los subtítulos.
 - El runtime de whisper.cpp se prepara automáticamente en desarrollo y se incluye con el instalador. El modelo se mantiene fuera del instalador para reducir su tamaño.
 - La descarga del modelo usa HTTPS, espera máxima por solicitud, límite de 100 MiB y verificación SHA-256 antes de instalarlo.
 - Si la escritura de fragmentos se retrasa, la grabación se pausa temporalmente y se reanuda al vaciarse la cola; el contador excluye ese tiempo.

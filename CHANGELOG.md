@@ -1,5 +1,36 @@
 # Cambios
 
+## 1.6.0 — 2026-10-16
+
+### Añadido
+
+- **Progreso de descarga y conversión.** Muestra porcentajes basados en bytes o avance real de FFmpeg, también en recuperación. Si falta el total, informa bytes o segundos procesados sin inventar porcentajes.
+- **Avisos de capacidad.** Consulta el volumen de recuperación antes de iniciar y cada cinco segundos durante la captura. Advierte por debajo de 1 GiB y solicita finalizar por debajo de 256 MiB. Conserva los originales y comprueba el destino antes de exportar.
+- **Perfiles de calidad.** Ligero, Equilibrado y Alta calidad ajustan resolución, FPS y bitrate. Permite resolución y FPS personalizados y conserva los ajustes para las recuperaciones.
+- **Selección y prueba de micrófono.** Incluye entrada, volumen de 0–200 % y medidor en ambas vistas. La prueba es explícita, no se guarda ni se reproduce y libera el dispositivo al terminar u ocultar la ventana.
+
+### Validación
+
+- Pruebas unitarias y renderer completo con audio y video sintéticos, volumen cero, liberación de entradas, pausa, señal simulada de espacio crítico y conversión MP4 con progreso real. Queda pendiente la comprobación con escritorio, micrófonos físicos y permisos reales de Windows.
+
+## 1.5.0 — 2026-10-15
+
+### Añadido
+
+- **Pausa manual de video y audio.** Los botones Pausar/Reanudar están disponibles en las vistas normal y compacta. Ctrl + Shift + F8 permite alternarlos desde otra aplicación. El contador excluye el tiempo pausado y Detener permite finalizar desde la pausa.
+- **Estado de pausa en la bandeja.** Distingue la pausa manual de la espera por escritura. Vaciar la cola no cancela una pausa manual; reanudar espera si aún quedan datos pendientes.
+
+## 1.4.0 — 2026-10-15
+
+### Cambiado
+
+- **El video se guarda aunque falle la transcripción.** El video se publica antes de generar los subtítulos. Si falta el modelo o falla el reconocimiento, la aplicación confirma el video guardado y conserva el original para reintentar el SRT.
+- **Reintento independiente de subtítulos.** En Grabaciones por recuperar, las sesiones con video guardado muestran su ruta y la acción Reintentar subtítulos. Funciona después de reiniciar, sin reconvertir el video y sin sobrescribir SRT existentes. Descartar conserva el video publicado. Si este se movió o eliminó, el original permanece disponible para volver a exportarlo.
+
+### Validación
+
+- Las pruebas automatizadas comprueban fallos, persistencia, reintento sin reconversión, protección de SRT existentes y conservación del original cuando falta el video publicado. La grabación real con micrófono y el reconocimiento con whisper.cpp requieren comprobación manual.
+
 ## 1.3.1 — 2026-10-15
 
 ### Cambiado

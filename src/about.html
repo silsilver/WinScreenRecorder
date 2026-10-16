@@ -79,9 +79,11 @@
 
         <section id="transcription" aria-labelledby="transcription-title">
           <h2 id="transcription-title">Transcripción automática</h2>
+          <p>La descarga del modelo muestra porcentaje si se conoce su tamaño y alcanza el 100 % después de verificar su integridad. La conversión muestra su avance real; si una recuperación no tiene duración conocida, informa los segundos procesados. La transcripción muestra la etapa actual.</p>
           <p>Las grabaciones con audio generan un archivo <code>.srt</code> junto a la captura final. Esto también aplica al original WebM y a las animaciones GIF obtenidas de una grabación con sonido. Las capturas sin audio no generan subtítulos.</p>
           <p>La primera vez se descarga un modelo de reconocimiento de voz de aproximadamente 57 MiB. Después, la transcripción funciona en este equipo sin enviar el audio a un servicio externo. El tiempo que tarda depende de la duración y del equipo.</p>
           <p>El reconocimiento puede cometer errores y depende de la claridad del audio. Si no se detecta voz, el archivo de subtítulos puede quedar vacío. Si el proceso se interrumpe, el reintento comienza desde el video original.</p>
+          <p>El video se guarda antes de generar los subtítulos. Si la transcripción falla, el video queda disponible y puedes elegir <strong>Reintentar subtítulos</strong> en <strong>Grabaciones por recuperar</strong>, incluso después de reiniciar. El reintento genera únicamente el SRT; si ya existe uno, agrega un número para conservarlo. Descartar esa sesión elimina el original de recuperación y conserva el video guardado.</p>
         </section>
 
         <section id="recovery" aria-labelledby="recovery-title">
@@ -105,6 +107,9 @@
         <section id="keyboard-shortcuts" aria-labelledby="keyboard-title">
           <h2 id="keyboard-title">Atajos de teclado</h2>
           <p>Los atajos globales funcionan mientras la aplicación esté abierta, incluso si usas otro programa o la ventana está oculta. Iniciar captura utiliza la fuente, el formato y el tipo de captura seleccionados; detener también cancela una cuenta atrás.</p>
+          <p>Durante la grabación, usa <strong>Pausar</strong> o <strong>Reanudar</strong> en cualquiera de las vistas, o pulsa <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>F8</kbd>. El contador excluye el tiempo pausado. Puedes detener y guardar desde la pausa. Si todavía se están escribiendo datos, la grabación espera antes de reanudar.</p>
+          <p>En Configuración o Ajustes de la vista compacta puedes elegir calidad Ligero, Equilibrado o Alta calidad y ajustar los FPS. Activa micrófono y selecciona una fuente para elegir entrada, ajustar volumen entre 0 y 200 % y comprobar el nivel sin reproducir ni guardar la prueba. Más de 100 % puede distorsionar. La prueba libera el micrófono al terminar u ocultar la ventana.</p>
+          <p>El espacio se consulta antes de grabar y durante la captura. Aparece un aviso por debajo de 1 GiB y se solicita finalizar si baja de 256 MiB, conservando el original recuperable. Si no se puede consultar, se informa como desconocido.</p>
           <table class="shortcut-table">
             <caption class="visually-hidden">Acciones de teclado y disponibilidad</caption>
             <thead><tr><th scope="col">Atajo</th><th scope="col">Acción</th><th scope="col">Dónde funciona</th></tr></thead>

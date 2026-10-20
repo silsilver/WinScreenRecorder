@@ -2,6 +2,7 @@
   "name": "winscreen-recorder",
   "version": "1.8.0",
   "description": "Windows screen and window recorder to standard formats",
+  "license": "MIT",
   "author": {
     "name": "Alan Suástegui Vázquez",
     "email": "sil.silver@gmail.com"
